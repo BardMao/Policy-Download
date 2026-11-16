@@ -197,10 +197,11 @@ test('buildExtensionZipBytes builds valid Manifest V3 Edge/Chrome extension arch
 
   const manifestObj = JSON.parse(generateManifestJson());
   assert.equal(manifestObj.manifest_version, 3);
-  assert.equal(manifestObj.version, '3.3.0');
+  assert.equal(manifestObj.version, '3.3.1');
   assert.ok(manifestObj.host_permissions.includes('https://www.pkulaw.com/*'));
   assert.ok(manifestObj.permissions.includes('scripting'));
-  assert.ok(manifestObj.permissions.includes('tabs'));
+  assert.ok(manifestObj.permissions.includes('downloads'));
+  assert.ok(!manifestObj.permissions.includes('tabs'));
 
   const pageHookJs = generatePageHookJs();
   assert.doesNotThrow(
@@ -217,7 +218,8 @@ test('buildExtensionZipBytes builds valid Manifest V3 Edge/Chrome extension arch
   );
   assert.ok(backgroundJs.includes('closeTrackedDownloadTabs'));
   assert.ok(backgroundJs.includes('refocusMainSearchTab'));
-  assert.ok(backgroundJs.includes('PKULAW_DOWNLOAD_STARTED'));
+  assert.ok(backgroundJs.includes('PKULAW_DOWNLOAD_COMPLETED'));
+  assert.ok(backgroundJs.includes('PKULAW_DOWNLOAD_FAILED'));
   assert.ok(backgroundJs.includes('PKULAW_FORCE_OPEN_DOWNLOAD_URL'));
   assert.ok(backgroundJs.includes('PKULAW_OPEN_DOWNLOADS_FOLDER'));
 
@@ -246,7 +248,7 @@ test('buildExtensionZipBytes builds valid Manifest V3 Edge/Chrome extension arch
   assert.ok(contentJs.includes('条法规，每页显示'));
   assert.ok(contentJs.includes('findResultsToolbar'));
   assert.ok(contentJs.includes('isCenteredBlockingOverlay'));
-  assert.ok(contentJs.includes('waitForRealDownloadSignal'));
+  assert.ok(contentJs.includes('waitForCompletedZip'));
   assert.ok(contentJs.includes('waitIfCaptchaUntilResolved'));
   assert.ok(contentJs.includes('countCheckedResultItems'));
   // Ensure old verbose waiting_format_choice fallback text is removed
@@ -269,7 +271,3 @@ test('buildExtensionZipBytes builds valid Manifest V3 Edge/Chrome extension arch
   assert.equal(zipBytes[3], 0x04);
   assert.ok(zipBytes.length > 1000);
 });
-
-
-
-

@@ -1,23 +1,21 @@
-import { AppSettings } from './pkulawLogic';
-import { createZipArchive, ZipFileEntry } from './zipBuilder';
+import type { AppSettings } from './pkulawLogic';
+import { createZipArchive, type ZipFileEntry } from './zipBuilder';
 
 export function generateManifestJson(): string {
   const manifest = {
     manifest_version: 3,
     name: '北大法宝法律法规批量下载助手 (PKULAW Batch Downloader)',
-    version: '3.3.0',
+    version: '3.3.1',
     description:
       '在北大法宝官网 (pkulaw.com) 底部注入操作进度条与全自动分页批量下载引擎，支持第2+页精确同步全文格式与单次防重确认、极速翻页间隔，将各页原始压缩包保存至下载目录。',
-    permissions: ['storage', 'downloads', 'tabs', 'scripting', 'activeTab'],
+    permissions: ['storage', 'downloads', 'scripting'],
     host_permissions: [
       'https://www.pkulaw.com/*',
       'https://*.pkulaw.com/*',
-      'http://www.pkulaw.com/*',
-      'http://*.pkulaw.com/*',
-      '*://pkulaw.com/*',
+      'https://pkulaw.com/*',
     ],
     action: {
-      default_title: '北大法宝批量下载助手 v3.3（点击打开或激活底部进度条）',
+      default_title: '北大法宝批量下载助手 v3.3.1（点击打开或激活底部进度条）',
     },
     background: {
       service_worker: 'background.js',
@@ -27,26 +25,22 @@ export function generateManifestJson(): string {
         matches: [
           'https://www.pkulaw.com/*',
           'https://*.pkulaw.com/*',
-          'http://www.pkulaw.com/*',
-          'http://*.pkulaw.com/*',
-          '*://pkulaw.com/*',
+          'https://pkulaw.com/*',
         ],
         js: ['page_hook.js'],
         run_at: 'document_start',
         world: 'MAIN',
-        all_frames: true,
+        all_frames: false,
       },
       {
         matches: [
           'https://www.pkulaw.com/*',
           'https://*.pkulaw.com/*',
-          'http://www.pkulaw.com/*',
-          'http://*.pkulaw.com/*',
-          '*://pkulaw.com/*',
+          'https://pkulaw.com/*',
         ],
         js: ['content.js'],
         run_at: 'document_end',
-        all_frames: true,
+        all_frames: false,
       },
     ],
   };
@@ -56,7 +50,7 @@ export function generateManifestJson(): string {
 export function generatePageHookJs(): string {
   const lines = [
     '// ============================================================================',
-    '// 北大法宝批量下载助手 - 页面主世界钩子 (page_hook.js v3.3.0, world: MAIN)',
+    '// 北大法宝批量下载助手 - 页面主世界钩子 (page_hook.js v3.3.1, world: MAIN)',
     '// 核心作用：当第 2 页及后续分页由扩展定时器自动点击「确定」触发下载时，',
     '// 网页处于无用户手势状态 (navigator.userActivation.isActive === false)，',
     '// 浏览器内置弹窗拦截器会拦截网页的 window.open / target="_blank" 表单提交，导致后续页无法下载。',
@@ -194,14 +188,23 @@ export function generateBackgroundJs(settings: AppSettings): string {
 
   const lines = [
     '// ============================================================================',
-    '// 北大法宝批量下载助手 - Chrome / Edge Manifest V3 后台服务 (background.js v3.3.0)',
+    '// 北大法宝批量下载助手 - Chrome / Edge Manifest V3 后台服务 (background.js v3.3.1)',
     '// 功能：1. 安装或重载扩展时立即向已打开的北大法宝标签页注入 page_hook.js 与 content.js',
     '//       2. 提供特权后台下载通道 (PKULAW_FORCE_OPEN_DOWNLOAD_URL)，突破第 2+ 页浏览器异步弹窗拦截',
     '//       3. 自动归档 pkulaw.com 下载的原始压缩包至浏览器默认“下载/Downloads”目录下的子文件夹',
     '// ============================================================================',
     '',
-    'let startedCounter = 0;',
-    'let downloadCounter = 0;',
+    'const pendingDownloads = new Map();',
+    'function isPkulawUrl(raw) {',
+    '  try {',
+    '    const url = new URL(raw);',
+    '    return url.protocol === "https:" && (url.hostname === "pkulaw.com" || url.hostname.endsWith(".pkulaw.com"));',
+    '  } catch (_) { return false; }',
+    '}',
+    'function isPkulawDownload(item) {',
+    '  return [item.url, item.referrer, item.finalUrl].some(isPkulawUrl);',
+    '}',
+
     'let lastDownloadItemId = null;',
     'const DEFAULT_SUBFOLDER = ' + JSON.stringify(folderName) + ';',
     '',
@@ -241,12 +244,12 @@ export function generateBackgroundJs(settings: AppSettings): string {
     'function injectScriptsIntoTab(tabId) {',
     '  if (!tabId || !chrome.scripting) return;',
     '  chrome.scripting.executeScript({',
-    '    target: { tabId: tabId, allFrames: true },',
+    '    target: { tabId: tabId },',
     '    files: ["page_hook.js"],',
     '    world: "MAIN"',
     '  }).catch(() => {});',
     '  chrome.scripting.executeScript({',
-    '    target: { tabId: tabId, allFrames: true },',
+    '    target: { tabId: tabId },',
     '    files: ["content.js"]',
     '  }).catch(() => {});',
     '}',
@@ -273,7 +276,7 @@ export function generateBackgroundJs(settings: AppSettings): string {
     '',
     'if (chrome.action && chrome.action.onClicked) {',
     '  chrome.action.onClicked.addListener((tab) => {',
-    '    if (tab && tab.id && tab.url && tab.url.includes("pkulaw.com")) {',
+    '    if (tab && tab.id && isPkulawUrl(tab.url)) {',
     '      injectScriptsIntoTab(tab.id);',
     '    } else {',
     '      chrome.tabs.create({ url: "https://www.pkulaw.com/law" });',
@@ -283,7 +286,7 @@ export function generateBackgroundJs(settings: AppSettings): string {
     '',
     '// 监听来自 content.js 的主检索页注册、打开下载目录与新开下载窗口管理请求',
     'chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {',
-    '  if (!msg || !msg.type) return false;',
+    '  if (!msg || !msg.type || sender.frameId !== 0 || !isPkulawUrl(sender.url)) return false;',
     '  if (msg.type === "PKULAW_SET_BATCH_ACTIVE") {',
     '    batchState.active = Boolean(msg.active);',
     '    if (sender && sender.tab && sender.tab.id) {',
@@ -291,7 +294,7 @@ export function generateBackgroundJs(settings: AppSettings): string {
     '      batchState.mainWindowId = sender.tab.windowId;',
     '      if (batchState.active && chrome.scripting) {',
     '        chrome.scripting.executeScript({',
-    '          target: { tabId: sender.tab.id, allFrames: true },',
+    '          target: { tabId: sender.tab.id },',
     '          files: ["page_hook.js"],',
     '          world: "MAIN"',
     '        }).catch(() => {});',
@@ -313,18 +316,11 @@ export function generateBackgroundJs(settings: AppSettings): string {
     '  }',
     '  if (msg.type === "PKULAW_FORCE_OPEN_DOWNLOAD_URL") {',
     '    const targetUrl = msg.url ? String(msg.url).trim() : "";',
-    '    if (targetUrl && targetUrl.startsWith("http")) {',
+    '    if (batchState.active && sender.frameId === 0 && sender.tab?.id === batchState.mainTabId && isPkulawUrl(targetUrl)) {',
     '      batchState.lastActiveTimestamp = Date.now();',
     '      chrome.tabs.create({ url: targetUrl, active: false }, (createdTab) => {',
     '        if (createdTab && createdTab.id) {',
     '          trackedDownloadTabIds.add(createdTab.id);',
-    '          setTimeout(() => {',
-    '            if (trackedDownloadTabIds.has(createdTab.id)) {',
-    '              trackedDownloadTabIds.delete(createdTab.id);',
-    '              chrome.tabs.remove(createdTab.id).catch(() => {});',
-    '              refocusMainSearchTab();',
-    '            }',
-    '          }, 25000);',
     '        }',
     '      });',
     '    }',
@@ -354,70 +350,15 @@ export function generateBackgroundJs(settings: AppSettings): string {
     '  return false;',
     '});',
     '',
-    '// 核心机制：当北大法宝每次下载弹出新标签页或新窗口时，立即将焦点切回原检索标签页，',
-    '// 但保持该下载标签页在后台存活以完成服务端 ZIP 打包，直到 chrome.downloads.onCreated 收到文件流后再关闭！',
-    'chrome.tabs.onCreated.addListener((tab) => {',
-    '  try {',
-    '    const isRecentBatch = batchState.active && (Date.now() - batchState.lastActiveTimestamp < 180000);',
-    '    if (!isRecentBatch || !batchState.mainTabId) return;',
-    '    if (tab.id === batchState.mainTabId) return;',
-    '',
-    '    const openedByMain = (tab.openerTabId === batchState.mainTabId);',
-    '    const veryRecentAction = (Date.now() - batchState.lastActiveTimestamp < 30000);',
-    '    if (openedByMain || veryRecentAction) {',
-    '      trackedDownloadTabIds.add(tab.id);',
-    '      // 1. 立即将焦点切回原检索标签页，避免界面停留在新弹出的空白/下载页',
-    '      setTimeout(() => {',
-    '        refocusMainSearchTab();',
-    '      }, 150);',
-    '      // 2. 宽松安全超时兜底（25秒）：给足北大法宝服务端打包生成 ZIP 的时间，正常情况下会在 onCreated 触发后 650ms 内提前关闭',
-    '      setTimeout(() => {',
-    '        if (trackedDownloadTabIds.has(tab.id)) {',
-    '          trackedDownloadTabIds.delete(tab.id);',
-    '          chrome.tabs.remove(tab.id).catch(() => {});',
-    '          refocusMainSearchTab();',
-    '        }',
-    '      }, 25000);',
-    '    }',
-    '  } catch (e) {',
-    '    console.warn("[PKULaw Ext] tabs.onCreated handler error:", e);',
-    '  }',
+    'chrome.downloads.onCreated.addListener((item) => {',
+    '  if (batchState.active && isPkulawDownload(item)) pendingDownloads.set(item.id, batchState.mainTabId);',
     '});',
     '',
-    '// 当浏览器真正开始接收北大法宝下载文件流（Ctrl+J 产生下载任务）时，通知主页面并关闭临时下载窗口',
-    'if (chrome.downloads && chrome.downloads.onCreated) {',
-    '  chrome.downloads.onCreated.addListener((item) => {',
-    '    try {',
-    '      const url = ((item.url || "") + " " + (item.referrer || "") + " " + (item.finalUrl || "")).toLowerCase();',
-    '      const isPkulawDownload = url.includes("pkulaw.com") || (batchState.active && (Date.now() - batchState.lastActiveTimestamp < 60000));',
-    '      if (isPkulawDownload) {',
-    '        startedCounter += 1;',
-    '        lastDownloadItemId = item.id;',
-    '        closeTrackedDownloadTabs(650);',
-    '        chrome.tabs.query({ url: ["*://*.pkulaw.com/*", "*://pkulaw.com/*"] }, (tabs) => {',
-    '          if (chrome.runtime.lastError || !tabs) return;',
-    '          tabs.forEach((tab) => {',
-    '            if (tab && tab.id) {',
-    '              chrome.tabs.sendMessage(tab.id, {',
-    '                type: "PKULAW_DOWNLOAD_STARTED",',
-    '                downloadId: item.id,',
-    '                totalStarted: startedCounter',
-    '              }).catch(() => {});',
-    '            }',
-    '          });',
-    '        });',
-    '      }',
-    '    } catch (e) {}',
-    '  });',
-    '}',
-    '',
+
     'chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {',
     '  try {',
-    '    const url = ((item.url || "") + " " + (item.referrer || "") + " " + (item.finalUrl || "")).toLowerCase();',
-    '    const isPkulawDownload = url.includes("pkulaw.com") || (batchState.active && (Date.now() - batchState.lastActiveTimestamp < 60000));',
-    '    if (isPkulawDownload) {',
-    '      lastDownloadItemId = item.id;',
-    '      closeTrackedDownloadTabs(550);',
+    '    if (batchState.active && isPkulawDownload(item) && /\\.zip$/i.test(item.filename || "")) {',
+
     '      chrome.storage.local.get(["subfolderName", "enableSubfolder"], (res) => {',
     '        const useSub = res && res.enableSubfolder !== false;',
     '        const rawFolder = (res && res.subfolderName) ? res.subfolderName : DEFAULT_SUBFOLDER;',
@@ -440,33 +381,24 @@ export function generateBackgroundJs(settings: AppSettings): string {
     '  return false;',
     '});',
     '',
-    'chrome.downloads.onChanged.addListener((delta) => {',
-    '  if (delta.state && delta.state.current === "complete") {',
-    '    chrome.downloads.search({ id: delta.id }, (items) => {',
-    '      if (items && items[0]) {',
-    '        const item = items[0];',
-    '        const url = ((item.url || "") + " " + (item.referrer || "") + " " + (item.finalUrl || "")).toLowerCase();',
-    '        if (url.includes("pkulaw.com") || batchState.active) {',
-    '          downloadCounter += 1;',
-    '          lastDownloadItemId = item.id;',
-    '          closeTrackedDownloadTabs(250);',
-    '          chrome.tabs.query({ url: ["*://*.pkulaw.com/*", "*://pkulaw.com/*"] }, (tabs) => {',
-    '            if (chrome.runtime.lastError || !tabs) return;',
-    '            tabs.forEach((tab) => {',
-    '              if (tab.id) {',
-    '                chrome.tabs.sendMessage(tab.id, {',
-    '                  type: "PKULAW_DOWNLOAD_COMPLETED",',
-    '                  filename: item.filename,',
-    '                  totalCompleted: downloadCounter',
-    '                }).catch(() => {});',
-    '              }',
-    '            });',
-    '          });',
-    '        }',
-    '      }',
-    '    });',
+    'chrome.downloads.onChanged.addListener(async (delta) => {',
+    '  if (!delta.state || !["complete", "interrupted"].includes(delta.state.current)) return;',
+    '  const tabId = pendingDownloads.get(delta.id);',
+    '  if (!tabId) return;',
+    '  pendingDownloads.delete(delta.id);',
+    '  const [item] = await chrome.downloads.search({ id: delta.id });',
+    '  if (!item) return;',
+    '  const complete = item.state === "complete" && /\\.zip$/i.test(item.filename) && item.fileSize > 0;',
+    '  if (complete) {',
+    '    lastDownloadItemId = item.id;',
+    '    closeTrackedDownloadTabs(250);',
     '  }',
+    '  chrome.tabs.sendMessage(tabId, {',
+    '    type: complete ? "PKULAW_DOWNLOAD_COMPLETED" : "PKULAW_DOWNLOAD_FAILED",',
+    '    downloadId: item.id',
+    '  }, { frameId: 0 }).catch(() => {});',
     '});',
+
   ];
 
   return lines.join('\n') + '\n';
@@ -480,9 +412,9 @@ export function generateContentJs(settings: AppSettings): string {
       .replace(/^\/+|\/+$/g, '') || 'PKULaw_Downloads';
 
   return `// ==UserScript==
-// @name         北大法宝法律法规批量下载助手 (Edge & Chrome 网页端自动化扩展 v3.3.0)
+// @name         北大法宝法律法规批量下载助手 (Edge & Chrome 网页端自动化扩展 v3.3.1)
 // @namespace    https://www.pkulaw.com/
-// @version      3.3.0
+// @version      3.3.1
 // @description  在北大法宝官网底部注入动态进度条：支持第2+页精确同步全文格式与单次防重确认、1~2秒极速翻页间隔，将各页原始压缩包保存至下载目录。
 // @author       PKULAW Batch Archiver
 // @match        https://www.pkulaw.com/*
@@ -630,9 +562,7 @@ export function generateContentJs(settings: AppSettings): string {
     currentPage: session.currentPage || 1,
     totalPages: session.totalPages || 1,
     downloadedBatches: session.downloadedBatches || 0,
-    startedDownloadsCount: 0,
     completedZipFiles: 0,
-    lastDownloadStartTimestamp: 0,
     chosenFormat: session.chosenFormat || config.lastChosenFormat || '纯净版',
     recordedConfirmBtn: null,
     recordedConfirmRawTarget: null,
@@ -666,43 +596,38 @@ export function generateContentJs(settings: AppSettings): string {
   // --------------------------------------------------------------------------
   // 2. 真实下载流握手与新下载窗口管理（含 MAIN 世界拦截桥接，严禁在文件流开始前提前强杀窗口）
   // --------------------------------------------------------------------------
-  let pendingDownloadWaiters = [];
+  const seenDownloadIds = new Set();
+  let expectedDownload = null;
 
-  function notifyDownloadStarted() {
-    state.lastDownloadStartTimestamp = Date.now();
-    while (pendingDownloadWaiters.length > 0) {
-      const resolveFn = pendingDownloadWaiters.shift();
-      try {
-        resolveFn(true);
-      } catch (e) {}
-    }
+  function expectZip() {
+    expectedDownload = { result: null };
   }
 
-  function waitForRealDownloadSignal(timeoutMs) {
-    const maxWait = typeof timeoutMs === 'number' ? timeoutMs : 9500;
-    const startTs = Date.now();
-    if (Date.now() - state.lastDownloadStartTimestamp < 1200) {
-      return Promise.resolve(true);
+  async function waitForCompletedZip() {
+    for (let i = 0; i < 300 && expectedDownload && !state.stopRequested; i++) {
+      if (i % 20 === 0) touchBatchLock(true);
+      if (expectedDownload.result !== null) {
+        const complete = expectedDownload.result;
+        expectedDownload = null;
+        return complete;
+      }
+      if (detectCaptchaVisible() && !await waitIfCaptchaUntilResolved()) break;
+      await sleep(300);
     }
-    return new Promise(function (resolve) {
-      let settled = false;
-      const waiter = function (ok) {
-        if (!settled) {
-          settled = true;
-          resolve(Boolean(ok));
-        }
-      };
-      pendingDownloadWaiters.push(waiter);
-      setTimeout(function () {
-        if (!settled) {
-          settled = true;
-          const idx = pendingDownloadWaiters.indexOf(waiter);
-          if (idx !== -1) pendingDownloadWaiters.splice(idx, 1);
-          resolve(Date.now() - startTs >= maxWait ? false : true);
-        }
-      }, maxWait);
-    });
+    expectedDownload = null;
+    return false;
   }
+
+  function stopWithError(message) {
+    state.stopRequested = true;
+    state.stage = 'download_error';
+    state.statusMessage = message;
+    expectedDownload = null;
+    touchBatchLock(false);
+    session = saveSession({ resumeDownloading: false });
+    renderBar();
+  }
+
 
   function requestOpenBrowserDownloadsFolder() {
     try {
@@ -716,7 +641,8 @@ export function generateContentJs(settings: AppSettings): string {
   window.addEventListener('message', function (event) {
     try {
       const data = event && event.data;
-      if (!data || data.source !== 'PKULAW_EXT_MAIN_HOOK') return;
+      if (!expectedDownload || event.source !== window || event.origin !== location.origin ||
+          !data || data.source !== 'PKULAW_EXT_MAIN_HOOK') return;
       if (data.type === 'PKULAW_FORCE_OPEN_URL' && data.url) {
         pushTrace('main_hook_open_url', data.url);
         if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
@@ -731,30 +657,16 @@ export function generateContentJs(settings: AppSettings): string {
 
   if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
     chrome.runtime.onMessage.addListener(function (msg) {
-      if (!msg || !msg.type) return;
-      if (msg.type === 'PKULAW_DOWNLOAD_STARTED') {
-        state.startedDownloadsCount = msg.totalStarted || (state.startedDownloadsCount + 1);
-        pushTrace('dl_started', 'count=' + state.startedDownloadsCount + ', stage=' + state.stage);
-        notifyDownloadStarted();
-        // 自愈闭环保障：若第 1 页用户在弹窗中触发下载后，浏览器已产生真实下载流但当前仍停留在 waiting_format_choice，立即自动推进到翻页循环！
-        if ((state.stage === 'waiting_format_choice' || state.stage === 'download_ready') && !state.loopRunning && state.downloadedBatches === 0) {
-          triggerFirstPageConfirmedAndStartLoop('auto_on_dl_started', findCustomDownloadModal(), state.recordedConfirmBtn, state.recordedConfirmRawTarget);
-        } else {
-          renderBar();
-        }
-      }
-      if (msg.type === 'PKULAW_DOWNLOAD_COMPLETED') {
-        state.completedZipFiles = msg.totalCompleted || (state.completedZipFiles + 1);
-        pushTrace('dl_completed', 'count=' + state.completedZipFiles + ', stage=' + state.stage);
-        notifyDownloadStarted();
-        if ((state.stage === 'waiting_format_choice' || state.stage === 'download_ready') && !state.loopRunning && state.downloadedBatches === 0) {
-          triggerFirstPageConfirmedAndStartLoop('auto_on_dl_completed', findCustomDownloadModal(), state.recordedConfirmBtn, state.recordedConfirmRawTarget);
-        } else {
-          renderBar();
-        }
-      }
+      if (!msg || !expectedDownload || expectedDownload.result !== null) return;
+      if (msg.type !== 'PKULAW_DOWNLOAD_COMPLETED' && msg.type !== 'PKULAW_DOWNLOAD_FAILED') return;
+      if (seenDownloadIds.has(msg.downloadId)) return;
+      seenDownloadIds.add(msg.downloadId);
+      expectedDownload.result = msg.type === 'PKULAW_DOWNLOAD_COMPLETED';
+      pushTrace('download_result', 'page=' + state.currentPage + ' | ' + msg.type);
+      if (expectedDownload.result) state.completedZipFiles += 1;
     });
   }
+
 
   function checkIfAuxiliaryDownloadPopupTab() {
     try {
@@ -773,11 +685,6 @@ export function generateContentJs(settings: AppSettings): string {
             window.opener.focus();
           }
         } catch (e) {}
-        setTimeout(function () {
-          try {
-            window.close();
-          } catch (e) {}
-        }, 22000);
         return true;
       }
     } catch (e) {}
@@ -2104,6 +2011,7 @@ export function generateContentJs(settings: AppSettings): string {
 
     // 1. 精确同步第 1 页的下载格式与单选/复选状态（杜绝第 2+ 页回退成默认的 Excel 目录列表）
     await syncModalFormatOptionsWithPage1(modalEl, targetFormat);
+    if (detectSelectedFormatInModal(modalEl) !== targetFormat) return false;
 
     touchBatchLock(true);
     const confirmBtn = findConfirmButtonInModal(modalEl);
@@ -2126,23 +2034,9 @@ export function generateContentJs(settings: AppSettings): string {
       dispatchRealMouseClick(confirmBtn);
     }
 
-    // 4. 等待 320ms 检查弹窗是否已关闭或按钮已进入 .is-loading 服务端打包状态
-    // 一旦进入 .is-loading 或弹窗关闭，说明点击已 100% 生效，立即返回，彻底杜绝同一页触发多次下载！
-    await sleep(320);
-    if (isModalLoadingOrClosed(modalEl, confirmBtn)) {
-      pushTrace('modal_confirm_accepted', 'loading_or_closed');
-      return true;
-    }
-
-    // 5. 仅当 320ms 后弹窗仍未关闭且按钮未进入 loading 状态时，才补充一次真实鼠标事件点击
-    const stillOpenModal = findCustomDownloadModal();
-    if (stillOpenModal && !isModalLoadingOrClosed(stillOpenModal, confirmBtn)) {
-      const retryBtn = findConfirmButtonInModal(stillOpenModal) || confirmBtn;
-      pushTrace('modal_fallback_click', retryBtn.tagName || '');
-      dispatchRealMouseClick(retryBtn);
-    }
     return true;
   }
+
 
   // --------------------------------------------------------------------------
   // 6.5 精准顺序翻页引擎（优先点击目标页码数字按钮 + 内容签名变更校验，彻底杜绝跳页/漏页）
@@ -2246,24 +2140,18 @@ export function generateContentJs(settings: AppSettings): string {
   }
 
   function hasMorePagesToDownload() {
-    const nextTargetPage = state.currentPage + 1;
-    if (state.totalPages > 1 && state.currentPage < state.totalPages) {
-      if (findTargetPageNumberButton(nextTargetPage) || findNextPageButton()) {
-        return true;
-      }
-    }
-    return Boolean(findNextPageButton());
+    return state.currentPage < state.totalPages || Boolean(findNextPageButton());
+  }
+
+  function getActivePageNumber() {
+    const active = Array.from(document.querySelectorAll(
+      '.el-pagination .el-pager li.active, .layui-laypage-curr, .ant-pagination-item-active'
+    )).find(function (node) { return isVisible(node); });
+    return active ? Number(active.textContent.trim()) || null : null;
   }
 
   function getPageContentSignature() {
     const parts = [];
-    // 提取当前分页器激活页码（严格限定在分页组件内部）
-    const activePager = document.querySelector(
-      '.el-pagination .el-pager li.number.active, .el-pagination .el-pager li.active, .layui-laypage-curr, .ant-pagination-item-active'
-    );
-    if (activePager) {
-      parts.push('p:' + (activePager.textContent || '').trim());
-    }
     // 提取本页前 3 条法规的序号与标题文本（如 "1. ..."、"21. ..."、"101. ..."）
     const cbs = findResultItemCheckboxes();
     for (let i = 0; i < Math.min(3, cbs.length); i++) {
@@ -2273,10 +2161,6 @@ export function generateContentJs(settings: AppSettings): string {
         const rowTxt = (row.innerText || row.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 48);
         if (rowTxt) parts.push(rowTxt);
       }
-    }
-    if (parts.length <= 1 && document.body) {
-      const m = (document.body.innerText || '').match(/\\b([0-9]{1,4})\\.\\s*[^\\n]{4,30}/);
-      if (m && m[0]) parts.push(m[0].replace(/\\s+/g, ' ').trim());
     }
     return parts.join(' | ');
   }
@@ -2341,39 +2225,15 @@ export function generateContentJs(settings: AppSettings): string {
       if (isResultsTableLoading()) continue;
       const curSig = getPageContentSignature();
       const cbs = findResultItemCheckboxes();
-      if (cbs.length > 0 && curSig && curSig !== prevSignature) {
+      if (getActivePageNumber() === targetPageNumber && cbs.length > 0 && curSig && curSig !== prevSignature) {
         await sleep(260);
         return true;
       }
     }
 
-    // 3. 若首次点击后页面签名仍未变化，使用备用分页按钮重试一次
-    const retryTargetBtn = findTargetPageNumberButton(targetPageNumber);
-    const retryNextBtn = findNextPageButton();
-    if (retryTargetBtn) {
-      dispatchRealMouseClick(retryTargetBtn, true);
-    } else if (retryNextBtn) {
-      clickPaginationControlOnce(retryNextBtn);
-    }
-
-    for (let tick = 0; tick < 25 && !state.stopRequested; tick++) {
-      await sleep(220);
-      if (detectCaptchaVisible()) {
-        const ok = await waitIfCaptchaUntilResolved();
-        if (!ok || state.stopRequested) return false;
-      }
-      if (isResultsTableLoading()) continue;
-      const curSig = getPageContentSignature();
-      const cbs = findResultItemCheckboxes();
-      if (cbs.length > 0 && curSig !== prevSignature) {
-        await sleep(260);
-        return true;
-      }
-    }
-
-    await sleep(300);
-    return findResultItemCheckboxes().length > 0;
+    return false;
   }
+
 
   // --------------------------------------------------------------------------
   // 7. 严苛化人工验证（CAPTCHA）视口居中遮挡检测（彻底杜绝登录框隐藏节点误报）
@@ -2525,17 +2385,16 @@ export function generateContentJs(settings: AppSettings): string {
     const finalFmt = detectedFmt || state.chosenFormat || '纯净版';
     state.chosenFormat = finalFmt;
     config = saveConfig({ lastChosenFormat: finalFmt });
-    state.downloadedBatches = 1;
-    state.currentPage = 1;
+    expectZip();
     state.stage = 'downloading';
     state.statusMessage = '第 1 页已按【' + finalFmt + '】触发下载，正在等待浏览器接收原始压缩包文件流...';
     session = saveSession({
       isMainSearchTab: true,
       manualLoginConfirmed: true,
       resumeDownloading: true,
-      currentPage: 1,
+      currentPage: state.currentPage,
       totalPages: state.totalPages,
-      downloadedBatches: 1,
+      downloadedBatches: 0,
       chosenFormat: finalFmt
     });
     const checkedLabels = (state.recordedModalInputsState || [])
@@ -2546,9 +2405,13 @@ export function generateContentJs(settings: AppSettings): string {
     renderBar();
 
     setTimeout(async function () {
-      await waitForRealDownloadSignal(9500);
+      if (!await waitForCompletedZip()) {
+        if (!state.stopRequested) stopWithError('未收到本页完整 ZIP，已暂停。请检查法宝和浏览器下载记录。');
+        return;
+      }
+      state.downloadedBatches = 1;
       runNextPageLoop();
-    }, 250);
+    }, 0);
   }
 
   // 监听用户在第 1 页北大法宝原生「自定义下载」弹窗中的真实点击操作与「确定」按钮
@@ -2637,7 +2500,8 @@ export function generateContentJs(settings: AppSettings): string {
       }
 
       if (
-        (state.stage === 'waiting_format_choice' || state.stage === 'download_ready') &&
+        state.stage === 'waiting_format_choice' &&
+        dialogRoot && dialogRoot.contains(target) &&
         isConfirmAction &&
         !state.loopRunning
       ) {
@@ -2774,7 +2638,7 @@ export function generateContentJs(settings: AppSettings): string {
     }
 
     const finalStats = countCheckedResultItems();
-    return finalStats.checked > 0 || Boolean(cb);
+    return finalStats.total > 0 && finalStats.checked === finalStats.total;
   }
 
   async function triggerOpenCustomDownloadModal() {
@@ -2834,6 +2698,9 @@ export function generateContentJs(settings: AppSettings): string {
 
   async function startBatchDownloadProcess() {
     state.stopRequested = false;
+    state.downloadedBatches = 0;
+    state.completedZipFiles = 0;
+    state.currentPage = getActivePageNumber() || 1;
     state.recordedUserModalClicks = [];
     state.recordedModalInputsState = [];
     detectPkulawDomState();
@@ -2845,7 +2712,10 @@ export function generateContentJs(settings: AppSettings): string {
     state.statusMessage = '请选择下载格式';
     renderBar();
 
-    await selectAllOnCurrentPage();
+    if (!await selectAllOnCurrentPage()) {
+      stopWithError('未能核对全选结果，已暂停。');
+      return;
+    }
     await sleep(240);
 
     let opened = await triggerOpenCustomDownloadModal();
@@ -2886,7 +2756,7 @@ export function generateContentJs(settings: AppSettings): string {
           state.stage = 'completed';
           touchBatchLock(false);
           session = saveSession({ resumeDownloading: false });
-          const actualTriggered = Math.max(state.startedDownloadsCount, state.completedZipFiles);
+          const actualTriggered = state.completedZipFiles;
           state.statusMessage =
             '全部批次原始压缩包下载已完成！共执行 ' +
             state.downloadedBatches +
@@ -2936,7 +2806,7 @@ export function generateContentJs(settings: AppSettings): string {
           state.stage = 'completed';
           touchBatchLock(false);
           session = saveSession({ resumeDownloading: false });
-          const actualTriggered = Math.max(state.startedDownloadsCount, state.completedZipFiles);
+          const actualTriggered = state.completedZipFiles;
           state.statusMessage =
             '全部批次原始压缩包下载已完成！共执行 ' +
             state.downloadedBatches +
@@ -2965,70 +2835,32 @@ export function generateContentJs(settings: AppSettings): string {
         renderBar();
 
         const navOk = await navigateToNextPageAndVerify(targetPage, prevSignature);
-        if (!navOk || state.stopRequested) break;
+        if (!navOk || state.stopRequested) {
+          if (!state.stopRequested) stopWithError('未能核对第 ' + targetPage + ' 页，已暂停。');
+          break;
+        }
 
         const resolvedAfterNav = await waitIfCaptchaUntilResolved();
         if (!resolvedAfterNav || state.stopRequested) break;
 
-        await selectAllOnCurrentPage();
-        await sleep(220);
-
-        let modalOpened = await triggerOpenCustomDownloadModal();
-        if (!modalOpened) {
-          if (detectCaptchaVisible()) {
-            await waitIfCaptchaUntilResolved();
-          }
-          await sleep(450);
-          await selectAllOnCurrentPage();
-          await sleep(220);
-          modalOpened = await triggerOpenCustomDownloadModal();
+        if (!await selectAllOnCurrentPage()) {
+          stopWithError('第 ' + targetPage + ' 页未能全选，已暂停。');
+          break;
+        }
+        const modalOpened = await triggerOpenCustomDownloadModal();
+        const modal = modalOpened && findCustomDownloadModal();
+        if (!modal) {
+          stopWithError('第 ' + targetPage + ' 页未能打开下载弹窗，已暂停。');
+          break;
         }
 
-        const downloadsBeforeConfirm = Math.max(state.startedDownloadsCount, state.completedZipFiles);
-        let modal = findCustomDownloadModal();
-        if (modal) {
-          state.statusMessage =
-            '第 ' +
-            state.currentPage +
-            '/' +
-            state.totalPages +
-            ' 页已同步【' +
-            state.chosenFormat +
-            '】格式并点击「确定」，等待服务端打包返回压缩包...';
-          renderBar();
-          await selectFormatAndConfirmInModalAsync(modal, state.chosenFormat);
-          await waitForRealDownloadSignal(12000);
-          // 若服务端仍在打包中（按钮处于 .is-loading 状态），继续等待打包完成，绝不重复点击「确定」！
-          for (let waitTick = 0; waitTick < 16 && !state.stopRequested; waitTick++) {
-            if (Math.max(state.startedDownloadsCount, state.completedZipFiles) > downloadsBeforeConfirm) break;
-            const openM = findCustomDownloadModal();
-            if (!openM || !isModalLoadingOrClosed(openM, null)) break;
-            await waitForRealDownloadSignal(1000);
-          }
+        expectZip();
+        if (!await selectFormatAndConfirmInModalAsync(modal, state.chosenFormat) ||
+            !await waitForCompletedZip()) {
+          if (!state.stopRequested) stopWithError('第 ' + targetPage + ' 页未收到完整 ZIP，已暂停。');
+          break;
         }
 
-        // 仅当本页尚未收到下载流且弹窗不处于 loading 打包状态时，才执行一次补救重试
-        if (!state.stopRequested && Math.max(state.startedDownloadsCount, state.completedZipFiles) <= downloadsBeforeConfirm) {
-          if (detectCaptchaVisible()) {
-            const okAfterConfirm = await waitIfCaptchaUntilResolved();
-            if (!okAfterConfirm || state.stopRequested) break;
-          }
-          const openM = findCustomDownloadModal();
-          if (!openM || !isModalLoadingOrClosed(openM, null)) {
-            state.statusMessage = '正在对第 ' + state.currentPage + ' 页执行二次确认下载校验...';
-            renderBar();
-            if (!findCustomDownloadModal()) {
-              await selectAllOnCurrentPage();
-              await sleep(250);
-              await triggerOpenCustomDownloadModal();
-            }
-            const retryModal = findCustomDownloadModal();
-            if (retryModal) {
-              await selectFormatAndConfirmInModalAsync(retryModal, state.chosenFormat);
-              await waitForRealDownloadSignal(10000);
-            }
-          }
-        }
 
         state.downloadedBatches += 1;
         session = saveSession({
@@ -3076,7 +2908,7 @@ export function generateContentJs(settings: AppSettings): string {
     const stats = countCheckedResultItems();
 
     return {
-      extVersion: '3.3.0',
+      extVersion: '3.3.1',
       url: window.location.href,
       title: document.title,
       stage: state.stage,
@@ -3090,7 +2922,6 @@ export function generateContentJs(settings: AppSettings): string {
       downloadedBatches: state.downloadedBatches,
       itemCheckboxesCount: stats.total,
       itemCheckboxesCheckedCount: stats.checked,
-      startedDownloadsCount: state.startedDownloadsCount,
       completedZipFiles: state.completedZipFiles,
       pageSignature: getPageContentSignature(),
       captchaVisible: detectCaptchaVisible(),
@@ -3218,13 +3049,14 @@ export function generateContentJs(settings: AppSettings): string {
             '已确认检索结果 →' +
           '</button>' +
         '</div>';
-    } else if (state.stage === 'download_ready') {
+    } else if (state.stage === 'download_ready' || state.stage === 'download_error') {
       const countLabel =
         state.detectedTotalCount > 0
           ? '（' + pageSummaryText + ' / 共 ' + state.totalPages + ' 页）'
           : '';
       mainActionHtml =
         '<div style="display:flex;align-items:center;gap:12px;flex:1;">' +
+          (state.statusMessage ? '<span role="status" style="color:#fbbf24">' + state.statusMessage + '</span>' : '') +
           (state.refreshInfoText ? refreshBadgeHtml : '') +
           '<button id="pkulaw-btn-start-download" style="flex:1;padding:10px 20px;border-radius:8px;border:none;background:#16a34a;color:#ffffff;font-size:14px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;box-shadow:0 2px 8px rgba(22,163,74,0.35);">' +
             '<span>▶ 开始下载 ' + countLabel + ' — 自动勾选全选并弹出「自定义下载」格式框</span>' +
@@ -3257,7 +3089,7 @@ export function generateContentJs(settings: AppSettings): string {
           '<div style="flex:1;min-width:0;">' +
             '<div style="display:flex;justify-content:space-between;font-size:13px;font-weight:600;color:#4ade80;margin-bottom:5px;">' +
               '<span>⏳ ' + state.statusMessage + '</span>' +
-              '<span style="font-family:monospace;">第 ' + state.currentPage + '/' + state.totalPages + ' 页 | 已触发压缩包下载: ' + Math.max(state.startedDownloadsCount, state.completedZipFiles) + ' (已完成: ' + state.completedZipFiles + ')</span>' +
+              '<span style="font-family:monospace;">第 ' + state.currentPage + '/' + state.totalPages + ' 页 | 已触发压缩包下载: ' + state.completedZipFiles + ' (已完成: ' + state.completedZipFiles + ')</span>' +
             '</div>' +
             '<div style="width:100%;height:8px;background:#1e293b;border-radius:4px;overflow:hidden;">' +
               '<div style="width:' + progressPct + '%;height:100%;background:#22c55e;transition:width 0.3s;"></div>' +
@@ -3304,7 +3136,7 @@ export function generateContentJs(settings: AppSettings): string {
       ? '<div style="position:fixed;inset:0;background:rgba(15,23,42,0.65);z-index:2147483646;display:flex;align-items:center;justify-content:center;padding:16px;">' +
           '<div style="width:100%;max-width:480px;background:#0f172a;border:1px solid #334155;border-radius:12px;padding:20px;color:#f8fafc;box-shadow:0 20px 40px rgba(0,0,0,0.5);font-family:system-ui,-apple-system,sans-serif;">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #1e293b;padding-bottom:12px;margin-bottom:14px;">' +
-              '<span style="font-size:15px;font-weight:700;">下载与扩展设置 (v3.3.0)</span>' +
+              '<span style="font-size:15px;font-weight:700;">下载与扩展设置 (v3.3.1)</span>' +
               '<button id="pkulaw-modal-close" style="background:none;border:none;color:#94a3b8;font-size:18px;cursor:pointer;">×</button>' +
             '</div>' +
             '<div style="display:flex;flex-direction:column;gap:12px;font-size:13px;">' +
@@ -3343,7 +3175,7 @@ export function generateContentJs(settings: AppSettings): string {
       ? '<div style="position:fixed;inset:0;background:rgba(15,23,42,0.7);z-index:2147483646;display:flex;align-items:center;justify-content:center;padding:16px;">' +
           '<div style="width:100%;max-width:620px;background:#0f172a;border:1px solid #38bdf8;border-radius:12px;padding:20px;color:#f8fafc;box-shadow:0 20px 40px rgba(0,0,0,0.6);font-family:system-ui,-apple-system,sans-serif;">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #1e293b;padding-bottom:12px;margin-bottom:12px;">' +
-              '<span style="font-size:15px;font-weight:700;color:#38bdf8;">🔍 网页 DOM 元素诊断与单步调试面板 (v3.3.0)</span>' +
+              '<span style="font-size:15px;font-weight:700;color:#38bdf8;">🔍 网页 DOM 元素诊断与单步调试面板 (v3.3.1)</span>' +
               '<button id="pkulaw-diag-close" style="background:none;border:none;color:#94a3b8;font-size:20px;cursor:pointer;">×</button>' +
             '</div>' +
             (state.diagCopiedBanner
@@ -3369,7 +3201,7 @@ export function generateContentJs(settings: AppSettings): string {
       diagModalHtml +
       '<div style="position:fixed;left:0;right:0;bottom:0;height:60px;background:#0f172a;border-top:2px solid #8B1E24;z-index:2147483645;display:flex;align-items:center;justify-content:space-between;padding:0 18px;gap:14px;box-shadow:0 -4px 20px rgba(0,0,0,0.35);font-family:system-ui,-apple-system,sans-serif;">' +
         '<div style="display:flex;align-items:center;gap:8px;white-space:nowrap;">' +
-          '<span style="display:inline-block;padding:4px 8px;border-radius:4px;background:#8B1E24;color:#fff;font-size:12px;font-weight:700;">法宝批量下载扩展 v3.3</span>' +
+          '<span style="display:inline-block;padding:4px 8px;border-radius:4px;background:#8B1E24;color:#fff;font-size:12px;font-weight:700;">法宝批量下载扩展 v3.3.1</span>' +
         '</div>' +
         mainActionHtml +
         '<div style="display:flex;align-items:center;gap:8px;white-space:nowrap;">' +
@@ -3603,34 +3435,18 @@ export function generateContentJs(settings: AppSettings): string {
     detectPkulawDomState();
     renderBar();
 
-    if (session.isMainSearchTab && session.resumeDownloading && state.domHasResults) {
-      state.stage = 'downloading';
-      state.currentPage = session.currentPage || 1;
-      state.downloadedBatches = session.downloadedBatches || 1;
-      state.chosenFormat = session.chosenFormat || config.lastChosenFormat || '纯净版';
-      state.statusMessage = '已恢复第 ' + state.currentPage + ' 页批量下载状态，正在继续执行...';
-      touchBatchLock(true);
+    if (session.resumeDownloading) {
+      session = saveSession({ resumeDownloading: false });
+      state.statusMessage = '页面已重新加载。请核对最后一个完整 ZIP，当页重启批量下载。';
       renderBar();
-      setTimeout(function () {
-        runNextPageLoop();
-      }, 1500);
     }
+
 
     window.__PKULAW_EXT_INTERVAL__ = setInterval(function () {
       const prevStage = state.stage;
       const prevCount = state.detectedTotalCount;
       const prevPageSize = state.pageSize;
       detectPkulawDomState();
-      // 定时看门狗自愈：若处于 waiting_format_choice 阶段且浏览器已记录到第 1 页下载开始/完成，立即切入自动翻页循环
-      if (
-        state.stage === 'waiting_format_choice' &&
-        !state.loopRunning &&
-        state.downloadedBatches === 0 &&
-        (state.startedDownloadsCount > 0 || state.completedZipFiles > 0)
-      ) {
-        triggerFirstPageConfirmedAndStartLoop('watchdog_interval_resume', findCustomDownloadModal(), state.recordedConfirmBtn, state.recordedConfirmRawTarget);
-        return;
-      }
       if (
         !document.getElementById('pkulaw-ext-root') ||
         state.stage !== prevStage ||
@@ -3653,32 +3469,32 @@ export function generateContentJs(settings: AppSettings): string {
 export function generateExtensionReadme(): string {
   return [
     '====================================================================',
-    '北大法宝法律法规批量下载扩展 v3.3.0 (适用于 Microsoft Edge 与 Google Chrome)',
+    '北大法宝法律法规批量下载扩展 v3.3.1 (适用于 Microsoft Edge 与 Google Chrome)',
     '====================================================================',
     '',
-    '【一、 v3.3.0 核心升级说明】',
+    '【一、 v3.3.1 核心升级说明】',
     '1. 彻底解决「第 2+ 页下载成了《【北大法宝】目录列表.xls》而非第 1 页所选法规全文压缩包 (.zip)」的问题：',
     '   - 根因修复：v3.2.0 在第 2+ 页对同一个单选框/复选框连续派发了 3 次点击（导致已勾选项被取消回退为默认的 Excel 目录列表），且未录制第 1 页用户在弹窗内对各个单选/复选框的操作。',
-    '   - v3.3.0 新增「第 1 页弹窗选项路径录制 + 全量 Input 勾选快照 1:1 同步」机制：第 1 页点击确定瞬间完整快照弹窗内所有单选/复选框状态，第 2+ 页采用单次干净点击并严格校验目标全文格式处于勾选状态、默认目录项处于未误勾状态。',
+    '   - v3.3.1 新增「第 1 页弹窗选项路径录制 + 全量 Input 勾选快照 1:1 同步」机制：第 1 页点击确定瞬间完整快照弹窗内所有单选/复选框状态，第 2+ 页采用单次干净点击并严格校验目标全文格式处于勾选状态、默认目录项处于未误勾状态。',
     '2. 彻底解决「同一页重复下载多次（目录列表 (1)、(2)...）」的问题：',
     '   - 根因修复：法宝点击「确定」后按钮会进入 Element UI 的 .is-loading 禁用等待打包状态（耗时约 3~8 秒），v3.2.0 在弹窗未关闭时于 220ms、970ms、6500ms 重复点击了确定按钮，导致服务端收到多次请求。',
-    '   - v3.3.0 新增 isModalLoadingOrClosed 状态锁：精准点击真正的 <button> 一次后，一旦检测到按钮进入 .is-loading 或 disabled 状态即停止重点，静候服务端完成 ZIP 打包。',
+    '   - v3.3.1 新增 isModalLoadingOrClosed 状态锁：精准点击真正的 <button> 一次后，一旦检测到按钮进入 .is-loading 或 disabled 状态即停止重点，静候服务端完成 ZIP 打包。',
     '3. 隔页等待随机时间间隔缩至最小：',
     '   - 默认隔页随机等待时间已从 4.5s~8.5s 大幅缩短为 1.0s~2.0s（并在底部「⚙ 下载设置」中提供一键切换「⚡ 极速模式 0.5s~1.2s」按钮）。',
     '',
     '【二、 如何更新到 Edge / Chrome 浏览器】',
     '1. 将最新下载的 PKULaw_Edge_Chrome_Extension.zip 解压覆盖到原文件夹。',
     '2. 打开 Edge 地址栏输入 edge://extensions（Chrome 输入 chrome://extensions）。',
-    '3. 点击本扩展卡片上的「重新加载」按钮，确认版本号变为 3.3.0，随后刷新北大法宝网页即可。',
+    '3. 点击本扩展卡片上的「重新加载」按钮，确认版本号变为 3.3.1，随后刷新北大法宝网页即可。',
   ].join('\r\n');
 }
 
 export function generateExtensionReadmeMarkdown(): string {
-  return `# 北大法宝法律法规批量下载扩展 v3.3.0 (Edge / Chrome)
+  return `# 北大法宝法律法规批量下载扩展 v3.3.1 (Edge / Chrome)
 
 本扩展（Manifest V3）专为 **北大法宝 V6 (\`https://www.pkulaw.com\`)** 打造，在网页底部注入可视化批量下载控制条，支持自动全选、跨页自动同步下载格式、人机验证实时监测自动恢复与原始压缩包归档。
 
-## 一、 v3.3.0 核心特性
+## 一、 v3.3.1 核心特性
 
 1. **第 1 页弹窗格式录制 + 第 2 页起 1:1 状态同步**：
    - 第 1 页在「批量下载」弹窗中选择全文格式（纯文本 / 纯净版 / Word / PDF / 超文本）并点击「确定」时，自动记录弹窗内点击路径与全部单选/复选框状态快照。
@@ -3697,7 +3513,7 @@ export function generateExtensionReadmeMarkdown(): string {
    - **Edge**：地址栏输入 \`edge://extensions\`，开启「开发人员模式」。
    - **Chrome**：地址栏输入 \`chrome://extensions\`，开启「开发者模式」。
 3. 点击 **「加载解压缩的扩展 / 加载已解压的扩展程序」**，选择解压后的文件夹。
-4. 若为覆盖更新，点击扩展卡片上的 **「刷新/重新加载 (⟳)」** 按钮，确认版本号为 \`3.3.0\`，然后刷新北大法宝网页即可使用。
+4. 若为覆盖更新，点击扩展卡片上的 **「刷新/重新加载 (⟳)」** 按钮，确认版本号为 \`3.3.1\`，然后刷新北大法宝网页即可使用。
 `;
 }
 
@@ -3730,4 +3546,3 @@ export function buildExtensionZipBytes(settings: AppSettings): Uint8Array {
   ];
   return createZipArchive(entries);
 }
-
