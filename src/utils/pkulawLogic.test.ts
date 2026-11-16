@@ -197,7 +197,7 @@ test('buildExtensionZipBytes builds valid Manifest V3 Edge/Chrome extension arch
 
   const manifestObj = JSON.parse(generateManifestJson());
   assert.equal(manifestObj.manifest_version, 3);
-  assert.equal(manifestObj.version, '3.3.2');
+  assert.equal(manifestObj.version, '3.3.3');
   assert.ok(manifestObj.host_permissions.includes('https://www.pkulaw.com/*'));
   assert.ok(manifestObj.permissions.includes('scripting'));
   assert.ok(manifestObj.permissions.includes('downloads'));

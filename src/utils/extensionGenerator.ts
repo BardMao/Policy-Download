@@ -5,7 +5,7 @@ export function generateManifestJson(): string {
   const manifest = {
     manifest_version: 3,
     name: '北大法宝法律法规批量下载助手 (PKULAW Batch Downloader)',
-    version: '3.3.2',
+    version: '3.3.3',
     description:
       '在北大法宝官网 (pkulaw.com) 底部注入操作进度条与全自动分页批量下载引擎，支持第2+页精确同步全文格式与单次防重确认、极速翻页间隔，将各页原始压缩包保存至下载目录。',
     permissions: ['storage', 'downloads', 'scripting'],
@@ -15,7 +15,7 @@ export function generateManifestJson(): string {
       'https://pkulaw.com/*',
     ],
     action: {
-      default_title: '北大法宝批量下载助手 v3.3.2（点击打开或激活底部进度条）',
+      default_title: '北大法宝批量下载助手 v3.3.3（点击打开或激活底部进度条）',
     },
     background: {
       service_worker: 'background.js',
@@ -50,7 +50,7 @@ export function generateManifestJson(): string {
 export function generatePageHookJs(): string {
   const lines = [
     '// ============================================================================',
-    '// 北大法宝批量下载助手 - 页面主世界钩子 (page_hook.js v3.3.2, world: MAIN)',
+    '// 北大法宝批量下载助手 - 页面主世界钩子 (page_hook.js v3.3.3, world: MAIN)',
     '// 核心作用：当第 2 页及后续分页由扩展定时器自动点击「确定」触发下载时，',
     '// 网页处于无用户手势状态 (navigator.userActivation.isActive === false)，',
     '// 浏览器内置弹窗拦截器会拦截网页的 window.open / target="_blank" 表单提交，导致后续页无法下载。',
@@ -188,7 +188,7 @@ export function generateBackgroundJs(settings: AppSettings): string {
 
   const lines = [
     '// ============================================================================',
-    '// 北大法宝批量下载助手 - Chrome / Edge Manifest V3 后台服务 (background.js v3.3.2)',
+    '// 北大法宝批量下载助手 - Chrome / Edge Manifest V3 后台服务 (background.js v3.3.3)',
     '// 功能：1. 安装或重载扩展时立即向已打开的北大法宝标签页注入 page_hook.js 与 content.js',
     '//       2. 提供特权后台下载通道 (PKULAW_FORCE_OPEN_DOWNLOAD_URL)，突破第 2+ 页浏览器异步弹窗拦截',
     '//       3. 自动归档 pkulaw.com 下载的原始压缩包至浏览器默认“下载/Downloads”目录下的子文件夹',
@@ -412,9 +412,9 @@ export function generateContentJs(settings: AppSettings): string {
       .replace(/^\/+|\/+$/g, '') || 'PKULaw_Downloads';
 
   return `// ==UserScript==
-// @name         北大法宝法律法规批量下载助手 (Edge & Chrome 网页端自动化扩展 v3.3.2)
+// @name         北大法宝法律法规批量下载助手 (Edge & Chrome 网页端自动化扩展 v3.3.3)
 // @namespace    https://www.pkulaw.com/
-// @version      3.3.2
+// @version      3.3.3
 // @description  在北大法宝官网底部注入动态进度条：支持第2+页精确同步全文格式与单次防重确认、1~2秒极速翻页间隔，将各页原始压缩包保存至下载目录。
 // @author       PKULAW Batch Archiver
 // @match        https://www.pkulaw.com/*
@@ -568,7 +568,6 @@ export function generateContentJs(settings: AppSettings): string {
     recordedConfirmRawTarget: null,
     recordedConfirmText: '',
     recordedConfirmModalRoot: null,
-    recordedUserModalClicks: [],
     recordedModalInputsState: [],
     lastOpenModalHtml: '',
     eventTrace: [],
@@ -1581,125 +1580,33 @@ export function generateContentJs(settings: AppSettings): string {
     return null;
   }
 
-  // 计算与解析相对于弹窗根节点的 DOM 子节点索引路径，即使第 2+ 页 Vue 重新销毁创建弹窗也能 100% 命中同一元素
-  function getRelativeNodePath(rootEl, targetEl) {
-    if (!rootEl || !targetEl || !rootEl.contains(targetEl)) return null;
-    const path = [];
-    let curr = targetEl;
-    while (curr && curr !== rootEl && curr.parentElement) {
-      const parent = curr.parentElement;
-      const children = parent.children;
-      let idx = -1;
-      for (let i = 0; i < children.length; i++) {
-        if (children[i] === curr) {
-          idx = i;
-          break;
-        }
-      }
-      if (idx === -1) return null;
-      path.unshift(idx);
-      curr = parent;
-    }
-    return curr === rootEl ? path : null;
-  }
+  const downloadFormats = ['纯文本', '纯净版', 'Word', 'PDF', '超文本', 'Excel'];
 
-  function resolveRelativeNodePath(rootEl, pathArr) {
-    if (!rootEl || !Array.isArray(pathArr) || pathArr.length === 0) return null;
-    let curr = rootEl;
-    for (let i = 0; i < pathArr.length; i++) {
-      const idx = pathArr[i];
-      if (!curr || !curr.children || idx < 0 || idx >= curr.children.length) {
-        return null;
-      }
-      curr = curr.children[idx];
-    }
-    return curr;
-  }
-
-  function isOptionNodeSelected(node) {
-    if (!node) return false;
-    if (node.tagName === 'INPUT' && (node.type === 'radio' || node.type === 'checkbox')) {
-      if (node.checked) return true;
-    }
-    const innerInp = node.querySelector ? node.querySelector('input[type="radio"], input[type="checkbox"]') : null;
-    if (innerInp && innerInp.checked) return true;
-    const checkCls = function (el) {
-      if (!el) return false;
-      const cls = ((el.className || '') + ' ' + (el.getAttribute ? el.getAttribute('aria-checked') || '' : '')).toLowerCase();
-      return (
-        cls.includes('is-checked') ||
-        cls.includes('checked') ||
-        cls.includes('active') ||
-        cls.includes('selected') ||
-        cls.includes('layui-form-radioed') ||
-        cls.includes('layui-form-checked') ||
-        cls === 'true'
-      );
-    };
-    if (checkCls(node)) return true;
-    if (node.parentElement && checkCls(node.parentElement)) return true;
-    if (node.closest) {
-      const w = node.closest('label, .el-radio, .el-checkbox, .ant-radio-wrapper, .layui-form-radio, li');
-      if (w && checkCls(w)) return true;
-    }
-    return false;
-  }
-
-  // 快照当前弹窗内全部单选框/复选框的精确勾选状态（在第 1 页点击「确定」瞬间调用，供第 2+ 页 1:1 校验还原）
-  function snapshotModalInputsState(modalEl) {
+  function getModalOptions(modalEl, type) {
     if (!modalEl) return [];
+    return Array.from(modalEl.querySelectorAll('input[type="' + type + '"]')).map(function (input) {
+      const label = Array.from(input.labels || []).find(function (node) { return modalEl.contains(node); }) ||
+        input.closest('.el-radio, .el-checkbox, .ant-radio-wrapper, .layui-form-radio, li');
+      const text = (label ? label.textContent : input.getAttribute('aria-label') || '')
+        .replace(/[\\s\\uE000-\\uF8FF]+/g, '');
+      const ariaChecked = label && label.getAttribute('aria-checked');
+      const checked = ariaChecked === 'true' || (ariaChecked !== 'false' && input.checked);
+      return { input: input, labelText: text, checked: checked };
+    });
+  }
+
+  function snapshotModalInputsState(modalEl) {
     cacheModalHtmlSnapshot(modalEl);
-    const inputs = modalEl.querySelectorAll('input[type="radio"], input[type="checkbox"]');
-    const list = [];
-    for (let i = 0; i < inputs.length; i++) {
-      const inp = inputs[i];
-      const wrap =
-        (inp.closest ? inp.closest('label, .el-radio, .el-checkbox, .ant-radio-wrapper, .layui-form-radio, .layui-form-checkbox, li') : null) ||
-        inp.parentElement;
-      const labelText = ((wrap ? wrap.textContent : '') || '').replace(/\\s+/g, '');
-      const checked = Boolean(inp.checked) || isOptionNodeSelected(wrap || inp);
-      list.push({
-        index: i,
-        type: inp.type || 'radio',
-        checked: checked,
-        labelText: labelText.slice(0, 24),
-        inputPath: getRelativeNodePath(modalEl, inp),
-        wrapPath: wrap ? getRelativeNodePath(modalEl, wrap) : null
-      });
-    }
-    return list;
+    return getModalOptions(modalEl, 'checkbox').map(function (option) {
+      return { labelText: option.labelText, checked: option.checked };
+    });
   }
 
   function detectSelectedFormatInModal(modalEl) {
-    if (!modalEl) return null;
-    // 注意：优先检查全文格式（纯文本 / 纯净版 / Word / PDF / 超文本），最后再看默认 Excel，防止被同时存在的目录复选框干扰
-    const formats = ['纯文本', '纯净版', 'Word', 'PDF', '超文本', 'Excel'];
-    const inputs = modalEl.querySelectorAll('input[type="radio"], input[type="checkbox"]');
-    for (let j = 0; j < formats.length; j++) {
-      const fmt = formats[j];
-      for (let i = 0; i < inputs.length; i++) {
-        const r = inputs[i];
-        const wrap =
-          (r.closest ? r.closest('label, .el-radio, .el-checkbox, .ant-radio-wrapper, .layui-form-radio, li, div') : null) ||
-          r.parentElement;
-        const containerText = ((wrap ? wrap.innerText || wrap.textContent : '') || '').replace(/\\s+/g, '');
-        if ((r.checked || isOptionNodeSelected(wrap)) && containerText.includes(fmt)) {
-          return fmt;
-        }
-      }
-    }
-    for (let j = 0; j < formats.length; j++) {
-      const f = formats[j];
-      const nodes = modalEl.querySelectorAll('label, span, div, li');
-      for (let i = 0; i < nodes.length; i++) {
-        const n = nodes[i];
-        const t = (n.textContent || '').replace(/\\s+/g, '');
-        if (t === f && isOptionNodeSelected(n)) {
-          return f;
-        }
-      }
-    }
-    return null;
+    const selected = getModalOptions(modalEl, 'radio').filter(function (option) {
+      return option.checked && downloadFormats.includes(option.labelText);
+    });
+    return selected.length === 1 ? selected[0].labelText : null;
   }
 
   function dispatchRealMouseClick(el, dismissTooltipAfter) {
@@ -1733,29 +1640,6 @@ export function generateContentJs(settings: AppSettings): string {
     }
   }
 
-  // 对弹窗内的单选框/复选框选项执行干净的单次点击（严禁对同一 label 连续点击 3 次导致勾选后又被取消！）
-  function clickModalOptionOnce(node) {
-    if (!node) return;
-    try {
-      const wrap =
-        (node.closest ? node.closest('label.el-radio, .el-radio, label.el-checkbox, .el-checkbox, .layui-form-radio, .layui-form-checkbox, label') : null) ||
-        node;
-      // 优先点击 Element UI 的 .el-radio__inner / .el-checkbox__inner 或 label 本身一次
-      const innerIndicator =
-        wrap.querySelector &&
-        wrap.querySelector('.el-radio__inner, .el-checkbox__inner, .el-radio__label, .el-checkbox__label');
-      const clickTarget = innerIndicator && isVisible(innerIndicator) ? innerIndicator : wrap;
-      if (typeof clickTarget.click === 'function') {
-        clickTarget.click();
-      } else {
-        dispatchRealMouseClick(clickTarget);
-      }
-    } catch (e) {
-      try {
-        node.click();
-      } catch (e2) {}
-    }
-  }
 
   function findConfirmButtonInModal(modalEl) {
     if (!modalEl) return null;
@@ -1835,206 +1719,59 @@ export function generateContentJs(settings: AppSettings): string {
     return null;
   }
 
-  // 检测弹窗是否已关闭，或者「确定」按钮是否已进入 Element UI 的 .is-loading / disabled 服务端打包等待状态
-  // 一旦处于 loading 状态，严禁再次点击「确定」，否则会导致同一页重复触发 2~3 次下载！
   function isModalLoadingOrClosed(modalEl, btnEl) {
-    const currentModal = findCustomDownloadModal();
-    if (!currentModal) return true;
-    const checkBtn = btnEl || findConfirmButtonInModal(currentModal);
-    if (checkBtn) {
-      const cls = String(checkBtn.className || '');
-      if (
-        checkBtn.disabled ||
-        checkBtn.hasAttribute('disabled') ||
-        cls.includes('is-loading') ||
-        Boolean(checkBtn.querySelector && checkBtn.querySelector('.el-icon-loading'))
-      ) {
-        return true;
-      }
-    }
-    if (currentModal.querySelector && currentModal.querySelector('.is-loading, .el-icon-loading, .el-loading-mask')) {
-      return true;
-    }
-    return false;
+    return !isVisible(modalEl) || btnEl.disabled || btnEl.hasAttribute('disabled') ||
+      btnEl.classList.contains('is-loading') ||
+      Array.from(modalEl.querySelectorAll('.el-loading-mask')).some(function (node) {
+        return isVisible(node);
+      });
   }
 
-  // 在第 2+ 页弹窗中精确同步第 1 页用户选择的全文格式与全部复选框/单选框状态
+  // 通过法宝原生表单控件触发 change，并读回实际选择。Vue 可以在切换格式后重建字段区域。
   async function syncModalFormatOptionsWithPage1(modalEl, targetFormat) {
-    if (!modalEl) return;
-
-    // 步骤 A：按顺序回放用户在第 1 页弹窗内亲手点击过的格式/类别节点（通过相对 DOM 路径定位）
-    if (Array.isArray(state.recordedUserModalClicks) && state.recordedUserModalClicks.length > 0) {
-      for (let i = 0; i < state.recordedUserModalClicks.length; i++) {
-        const step = state.recordedUserModalClicks[i];
-        const resolvedWrap = resolveRelativeNodePath(modalEl, step.labelPath);
-        const resolvedRaw = resolveRelativeNodePath(modalEl, step.rawPath);
-        const nodeToClick = resolvedWrap || resolvedRaw;
-        if (nodeToClick && isVisible(nodeToClick)) {
-          // 若该节点已经是选中状态的单选框，则无需重复点击；否则执行单次点击
-          const inp =
-            nodeToClick.tagName === 'INPUT'
-              ? nodeToClick
-              : nodeToClick.querySelector
-                ? nodeToClick.querySelector('input[type="radio"], input[type="checkbox"]')
-                : null;
-          if (!inp || inp.type === 'checkbox' || !inp.checked) {
-            clickModalOptionOnce(nodeToClick);
-            await sleep(90);
-          }
-        }
-      }
-    }
-
-    // 步骤 B：严格比对弹窗内所有 input[type="radio"] 与 input[type="checkbox"] 的勾选状态与第 1 页快照是否完全一致
-    if (Array.isArray(state.recordedModalInputsState) && state.recordedModalInputsState.length > 0) {
-      const liveInputs = modalEl.querySelectorAll('input[type="radio"], input[type="checkbox"]');
-      // 第一遍：把第 1 页勾选为 true 但当前仍为 false 的单选框/复选框勾上
-      for (let i = 0; i < state.recordedModalInputsState.length; i++) {
-        const snap = state.recordedModalInputsState[i];
-        const inp = resolveRelativeNodePath(modalEl, snap.inputPath) || liveInputs[snap.index];
-        if (!inp) continue;
-        const wrap =
-          resolveRelativeNodePath(modalEl, snap.wrapPath) ||
-          (inp.closest ? inp.closest('label, .el-radio, .el-checkbox, .layui-form-radio, .layui-form-checkbox') : null) ||
-          inp.parentElement;
-        const nowChecked = Boolean(inp.checked) || isOptionNodeSelected(wrap || inp);
-        if (snap.checked && !nowChecked) {
-          clickModalOptionOnce(wrap || inp);
-          await sleep(80);
-          if (!inp.checked) {
-            try {
-              inp.click();
-              if (!inp.checked) {
-                inp.checked = true;
-                inp.dispatchEvent(new Event('change', { bubbles: true }));
-              }
-            } catch (e) {}
-          }
-        }
-      }
-      // 第二遍：把第 1 页未勾选 (checked === false) 但当前默认被勾选的复选框（例如默认勾选的“目录/Excel”）取消勾选
-      for (let i = 0; i < state.recordedModalInputsState.length; i++) {
-        const snap = state.recordedModalInputsState[i];
-        const inp = resolveRelativeNodePath(modalEl, snap.inputPath) || liveInputs[snap.index];
-        if (!inp || inp.type !== 'checkbox') continue;
-        const wrap =
-          resolveRelativeNodePath(modalEl, snap.wrapPath) ||
-          (inp.closest ? inp.closest('label, .el-checkbox, .layui-form-checkbox') : null) ||
-          inp.parentElement;
-        const nowChecked = Boolean(inp.checked) || isOptionNodeSelected(wrap || inp);
-        if (!snap.checked && nowChecked) {
-          clickModalOptionOnce(wrap || inp);
-          await sleep(80);
-          if (inp.checked) {
-            try {
-              inp.click();
-              if (inp.checked) {
-                inp.checked = false;
-                inp.dispatchEvent(new Event('change', { bubbles: true }));
-              }
-            } catch (e) {}
-          }
-        }
-      }
-    }
-
-    // 步骤 C：按目标格式名称（如“纯文本”、“Word”、“纯净版”、“PDF”）做最终兜底校验，确保目标格式一定处于选中状态
-    if (targetFormat) {
-      // 若目标格式不是 Excel（即用户需要下载法规全文），且弹窗中存在“全文”与“目录”切换项，确保“全文”已激活且“目录”复选框未误勾
-      if (targetFormat !== 'Excel') {
-        const allLabels = modalEl.querySelectorAll('label.el-radio, .el-radio, label.el-checkbox, .el-checkbox, label, span, li');
-        for (let i = 0; i < allLabels.length; i++) {
-          const el = allLabels[i];
-          if (!isVisible(el)) continue;
-          const t = (el.textContent || '').replace(/\\s+/g, '');
-          if ((t === '全文' || t === '下载全文') && !isOptionNodeSelected(el)) {
-            clickModalOptionOnce(el);
-            await sleep(80);
-          }
-        }
-      }
-
-      const currentFmt = detectSelectedFormatInModal(modalEl);
-      if (currentFmt !== targetFormat) {
-        // 寻找最内层文本等于或包含 targetFormat 的单选框/复选框或标签
-        const candidates = modalEl.querySelectorAll('label.el-radio, .el-radio, label.el-checkbox, .el-checkbox, label, span, div, a, li');
-        let bestTarget = null;
-        let smallestLen = Infinity;
-        for (let i = 0; i < candidates.length; i++) {
-          const el = candidates[i];
-          if (!isVisible(el)) continue;
-          const txt = (el.textContent || '').replace(/\\s+/g, '');
-          if (txt === targetFormat || (txt.indexOf(targetFormat) !== -1 && txt.length <= targetFormat.length + 4)) {
-            if (txt.length < smallestLen) {
-              smallestLen = txt.length;
-              bestTarget = el;
-            }
-          }
-        }
-        if (bestTarget) {
-          const wrap =
-            (bestTarget.closest ? bestTarget.closest('label.el-radio, .el-radio, label.el-checkbox, .el-checkbox, .layui-form-radio, label') : null) ||
-            bestTarget;
-          if (!isOptionNodeSelected(wrap)) {
-            clickModalOptionOnce(wrap);
-            await sleep(90);
-          }
-          const radioOrCb =
-            (wrap.querySelector ? wrap.querySelector('input[type="radio"], input[type="checkbox"]') : null) ||
-            (bestTarget.previousElementSibling && (bestTarget.previousElementSibling.type === 'radio' || bestTarget.previousElementSibling.type === 'checkbox')
-              ? bestTarget.previousElementSibling
-              : null);
-          if (radioOrCb && !radioOrCb.checked) {
-            try {
-              radioOrCb.click();
-              if (!radioOrCb.checked) {
-                radioOrCb.checked = true;
-                radioOrCb.dispatchEvent(new Event('change', { bubbles: true }));
-              }
-            } catch (e) {}
-          }
-        }
-      }
-    }
-
-    const verifiedSnap = snapshotModalInputsState(modalEl)
-      .filter(function (x) { return x.checked; })
-      .map(function (x) { return x.labelText; })
-      .join(',');
-    pushTrace('modal_sync_fmt', 'target=' + targetFormat + ' | checked=[' + verifiedSnap + ']');
-    await sleep(120);
-  }
-
-  async function selectFormatAndConfirmInModalAsync(modalEl, targetFormat) {
-    if (!modalEl) return false;
-    touchBatchLock(true);
-
-    // 1. 精确同步第 1 页的下载格式与单选/复选状态（杜绝第 2+ 页回退成默认的 Excel 目录列表）
-    await syncModalFormatOptionsWithPage1(modalEl, targetFormat);
-    if (detectSelectedFormatInModal(modalEl) !== targetFormat) return false;
-
-    touchBatchLock(true);
-    const confirmBtn = findConfirmButtonInModal(modalEl);
-    if (!confirmBtn) {
-      pushTrace('modal_confirm_not_found', modalEl.className || modalEl.tagName);
+    const formats = getModalOptions(modalEl, 'radio').filter(function (option) {
+      return option.labelText === targetFormat && !option.input.disabled;
+    });
+    if (formats.length !== 1) {
+      pushTrace('modal_format_not_found', targetFormat);
       return false;
     }
 
-    // 2. 若按钮已处于 is-loading 状态，说明已经在打包下载中，绝不重复点击
-    if (isModalLoadingOrClosed(modalEl, confirmBtn)) {
-      pushTrace('modal_already_loading', confirmBtn.tagName || '');
-      return true;
+    if (!formats[0].checked) {
+      formats[0].input.click();
+      await sleep(150);
     }
 
-    // 3. 对真正的 <button> 执行单次干净点击
-    pushTrace('modal_click_confirm', (confirmBtn.tagName || '') + ':' + ((confirmBtn.textContent || '').replace(/\\s+/g, '').slice(0, 16)));
-    if (typeof confirmBtn.click === 'function') {
-      confirmBtn.click();
-    } else {
-      dispatchRealMouseClick(confirmBtn);
+    for (const previous of state.recordedModalInputsState) {
+      if (!previous.labelText) continue;
+      const live = getModalOptions(modalEl, 'checkbox').find(function (option) {
+        return option.labelText === previous.labelText;
+      });
+      if (live && !live.input.disabled && live.checked !== previous.checked) {
+        live.input.click();
+        await sleep(60);
+      }
     }
 
-    return true;
+    const selectedFormat = detectSelectedFormatInModal(modalEl);
+    pushTrace('modal_sync_fmt', 'target=' + targetFormat + ' | selected=' + selectedFormat);
+    return selectedFormat === targetFormat;
+  }
+
+  async function selectFormatAndConfirmInModalAsync(modalEl, targetFormat) {
+    if (!await syncModalFormatOptionsWithPage1(modalEl, targetFormat)) {
+      return '无法确认已选中「' + targetFormat + '」';
+    }
+
+    const confirmBtn = findConfirmButtonInModal(modalEl);
+    if (!confirmBtn || isModalLoadingOrClosed(modalEl, confirmBtn)) {
+      return '下载弹窗的确定按钮不可用';
+    }
+
+    touchBatchLock(true);
+    pushTrace('modal_click_confirm', confirmBtn.tagName + ':' + (confirmBtn.textContent || '').trim().slice(0, 16));
+    confirmBtn.click();
+    return null;
   }
 
 
@@ -2384,12 +2121,16 @@ export function generateContentJs(settings: AppSettings): string {
     touchBatchLock(true);
 
     const detectedFmt = modalEl ? detectSelectedFormatInModal(modalEl) : null;
-    const finalFmt = detectedFmt || state.chosenFormat || '纯净版';
+    if (!detectedFmt) {
+      stopWithError('无法识别当前下载格式，请从当前页重新开始。');
+      return;
+    }
+    const finalFmt = detectedFmt;
     state.chosenFormat = finalFmt;
     config = saveConfig({ lastChosenFormat: finalFmt });
     expectZip();
     state.stage = 'downloading';
-    state.statusMessage = '第 1 页已按【' + finalFmt + '】触发下载，正在等待浏览器接收原始压缩包文件流...';
+    state.statusMessage = '第 ' + state.currentPage + ' 页已按【' + finalFmt + '】触发下载，正在等待浏览器接收原始压缩包文件流...';
     session = saveSession({
       isMainSearchTab: true,
       manualLoginConfirmed: true,
@@ -2453,53 +2194,6 @@ export function generateContentJs(settings: AppSettings): string {
         (btnEl.classList && btnEl.classList.contains('layui-layer-btn0')) ||
         ((btnText === '下载' || rawText === '下载') && Boolean(dialogRoot) && !(target.closest && target.closest('.batch-container')));
 
-      const isCancelOrClose =
-        btnText.includes('取消') ||
-        btnText.includes('关闭') ||
-        rawText.includes('取消') ||
-        rawText.includes('关闭') ||
-        Boolean(target.closest && target.closest('.el-dialog__headerbtn, .layui-layer-close'));
-
-      const formats = ['纯文本', '纯净版', 'Word', 'PDF', '超文本', 'Excel'];
-      const labelNode =
-        (target.closest ? target.closest('label.el-radio, .el-radio, label.el-checkbox, .el-checkbox, .ant-radio-wrapper, .layui-form-radio, label, li, span') : null) ||
-        target;
-      const clickedText = ((labelNode.textContent || target.textContent || '') + '').replace(/\\s+/g, '');
-
-      if (!isConfirmAction && !isCancelOrClose && dialogRoot && dialogRoot.contains(target)) {
-        for (let i = 0; i < formats.length; i++) {
-          const f = formats[i];
-          if (clickedText === f || (clickedText.length <= 12 && clickedText.includes(f))) {
-            state.chosenFormat = f;
-            config = saveConfig({ lastChosenFormat: f });
-            pushTrace('user_select_fmt', f);
-            renderBar();
-            break;
-          }
-        }
-        // 记录用户在第 1 页弹窗内点击过的选项相对路径，供第 2+ 页精确回放
-        const rawPath = getRelativeNodePath(dialogRoot, target);
-        const labelPath = getRelativeNodePath(dialogRoot, labelNode);
-        if (rawPath || labelPath) {
-          state.recordedUserModalClicks.push({
-            rawPath: rawPath,
-            labelPath: labelPath,
-            text: clickedText.slice(0, 24)
-          });
-          if (state.recordedUserModalClicks.length > 10) {
-            state.recordedUserModalClicks.shift();
-          }
-        }
-        // 延迟 60ms 刷新弹窗内所有单选/复选框的最新勾选快照
-        setTimeout(function () {
-          if (dialogRoot && document.body.contains(dialogRoot)) {
-            const snap = snapshotModalInputsState(dialogRoot);
-            if (snap.length > 0) {
-              state.recordedModalInputsState = snap;
-            }
-          }
-        }, 60);
-      }
 
       if (
         state.stage === 'waiting_format_choice' &&
@@ -2703,8 +2397,10 @@ export function generateContentJs(settings: AppSettings): string {
     state.downloadedBatches = 0;
     state.completedZipFiles = 0;
     state.currentPage = getActivePageNumber() || 1;
-    state.recordedUserModalClicks = [];
     state.recordedModalInputsState = [];
+    state.recordedConfirmModalRoot = null;
+    state.recordedConfirmBtn = null;
+    state.recordedConfirmText = '';
     detectPkulawDomState();
     session = saveSession({ isMainSearchTab: true });
     touchBatchLock(true);
@@ -2857,8 +2553,12 @@ export function generateContentJs(settings: AppSettings): string {
         }
 
         expectZip();
-        if (!await selectFormatAndConfirmInModalAsync(modal, state.chosenFormat) ||
-            !await waitForCompletedZip()) {
+        const confirmError = await selectFormatAndConfirmInModalAsync(modal, state.chosenFormat);
+        if (confirmError) {
+          stopWithError('第 ' + targetPage + ' 页' + confirmError + '，已暂停。');
+          break;
+        }
+        if (!await waitForCompletedZip()) {
           if (!state.stopRequested) stopWithError('第 ' + targetPage + ' 页未收到完整 ZIP，已暂停。');
           break;
         }
@@ -2910,7 +2610,7 @@ export function generateContentJs(settings: AppSettings): string {
     const stats = countCheckedResultItems();
 
     return {
-      extVersion: '3.3.2',
+      extVersion: '3.3.3',
       url: window.location.href,
       title: document.title,
       stage: state.stage,
@@ -3138,7 +2838,7 @@ export function generateContentJs(settings: AppSettings): string {
       ? '<div style="position:fixed;inset:0;background:rgba(15,23,42,0.65);z-index:2147483646;display:flex;align-items:center;justify-content:center;padding:16px;">' +
           '<div style="width:100%;max-width:480px;background:#0f172a;border:1px solid #334155;border-radius:12px;padding:20px;color:#f8fafc;box-shadow:0 20px 40px rgba(0,0,0,0.5);font-family:system-ui,-apple-system,sans-serif;">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #1e293b;padding-bottom:12px;margin-bottom:14px;">' +
-              '<span style="font-size:15px;font-weight:700;">下载与扩展设置 (v3.3.2)</span>' +
+              '<span style="font-size:15px;font-weight:700;">下载与扩展设置 (v3.3.3)</span>' +
               '<button id="pkulaw-modal-close" style="background:none;border:none;color:#94a3b8;font-size:18px;cursor:pointer;">×</button>' +
             '</div>' +
             '<div style="display:flex;flex-direction:column;gap:12px;font-size:13px;">' +
@@ -3177,7 +2877,7 @@ export function generateContentJs(settings: AppSettings): string {
       ? '<div style="position:fixed;inset:0;background:rgba(15,23,42,0.7);z-index:2147483646;display:flex;align-items:center;justify-content:center;padding:16px;">' +
           '<div style="width:100%;max-width:620px;background:#0f172a;border:1px solid #38bdf8;border-radius:12px;padding:20px;color:#f8fafc;box-shadow:0 20px 40px rgba(0,0,0,0.6);font-family:system-ui,-apple-system,sans-serif;">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #1e293b;padding-bottom:12px;margin-bottom:12px;">' +
-              '<span style="font-size:15px;font-weight:700;color:#38bdf8;">🔍 网页 DOM 元素诊断与单步调试面板 (v3.3.2)</span>' +
+              '<span style="font-size:15px;font-weight:700;color:#38bdf8;">🔍 网页 DOM 元素诊断与单步调试面板 (v3.3.3)</span>' +
               '<button id="pkulaw-diag-close" style="background:none;border:none;color:#94a3b8;font-size:20px;cursor:pointer;">×</button>' +
             '</div>' +
             (state.diagCopiedBanner
@@ -3203,7 +2903,7 @@ export function generateContentJs(settings: AppSettings): string {
       diagModalHtml +
       '<div style="position:fixed;left:0;right:0;bottom:0;height:60px;background:#0f172a;border-top:2px solid #8B1E24;z-index:2147483645;display:flex;align-items:center;justify-content:space-between;padding:0 18px;gap:14px;box-shadow:0 -4px 20px rgba(0,0,0,0.35);font-family:system-ui,-apple-system,sans-serif;">' +
         '<div style="display:flex;align-items:center;gap:8px;white-space:nowrap;">' +
-          '<span style="display:inline-block;padding:4px 8px;border-radius:4px;background:#8B1E24;color:#fff;font-size:12px;font-weight:700;">法宝批量下载扩展 v3.3.2</span>' +
+          '<span style="display:inline-block;padding:4px 8px;border-radius:4px;background:#8B1E24;color:#fff;font-size:12px;font-weight:700;">法宝批量下载扩展 v3.3.3</span>' +
         '</div>' +
         mainActionHtml +
         '<div style="display:flex;align-items:center;gap:8px;white-space:nowrap;">' +
@@ -3471,35 +3171,35 @@ export function generateContentJs(settings: AppSettings): string {
 export function generateExtensionReadme(): string {
   return [
     '====================================================================',
-    '北大法宝法律法规批量下载扩展 v3.3.2 (适用于 Microsoft Edge 与 Google Chrome)',
+    '北大法宝法律法规批量下载扩展 v3.3.3 (适用于 Microsoft Edge 与 Google Chrome)',
     '====================================================================',
     '',
-    '【一、 v3.3.2 核心升级说明】',
+    '【一、 v3.3.3 核心升级说明】',
     '1. 彻底解决「第 2+ 页下载成了《【北大法宝】目录列表.xls》而非第 1 页所选法规全文压缩包 (.zip)」的问题：',
     '   - 根因修复：v3.2.0 在第 2+ 页对同一个单选框/复选框连续派发了 3 次点击（导致已勾选项被取消回退为默认的 Excel 目录列表），且未录制第 1 页用户在弹窗内对各个单选/复选框的操作。',
-    '   - v3.3.2 新增「第 1 页弹窗选项路径录制 + 全量 Input 勾选快照 1:1 同步」机制：第 1 页点击确定瞬间完整快照弹窗内所有单选/复选框状态，第 2+ 页采用单次干净点击并严格校验目标全文格式处于勾选状态、默认目录项处于未误勾状态。',
+    '   - 记录起始页的下载格式及字段。后续页使用同名的原生单选框切换格式，经读回确认后提交。',
     '2. 彻底解决「同一页重复下载多次（目录列表 (1)、(2)...）」的问题：',
     '   - 根因修复：法宝点击「确定」后按钮会进入 Element UI 的 .is-loading 禁用等待打包状态（耗时约 3~8 秒），v3.2.0 在弹窗未关闭时于 220ms、970ms、6500ms 重复点击了确定按钮，导致服务端收到多次请求。',
-    '   - v3.3.2 新增 isModalLoadingOrClosed 状态锁：精准点击真正的 <button> 一次后，一旦检测到按钮进入 .is-loading 或 disabled 状态即停止重点，静候服务端完成 ZIP 打包。',
+    '   - v3.3.3 新增 isModalLoadingOrClosed 状态锁：精准点击真正的 <button> 一次后，一旦检测到按钮进入 .is-loading 或 disabled 状态即停止重点，静候服务端完成 ZIP 打包。',
     '3. 隔页等待随机时间间隔缩至最小：',
     '   - 默认隔页随机等待时间已从 4.5s~8.5s 大幅缩短为 1.0s~2.0s（并在底部「⚙ 下载设置」中提供一键切换「⚡ 极速模式 0.5s~1.2s」按钮）。',
     '',
     '【二、 如何更新到 Edge / Chrome 浏览器】',
     '1. 将最新下载的 PKULaw_Edge_Chrome_Extension.zip 解压覆盖到原文件夹。',
     '2. 打开 Edge 地址栏输入 edge://extensions（Chrome 输入 chrome://extensions）。',
-    '3. 点击本扩展卡片上的「重新加载」按钮，确认版本号变为 3.3.2，随后刷新北大法宝网页即可。',
+    '3. 点击本扩展卡片上的「重新加载」按钮，确认版本号变为 3.3.3，随后刷新北大法宝网页即可。',
   ].join('\r\n');
 }
 
 export function generateExtensionReadmeMarkdown(): string {
-  return `# 北大法宝法律法规批量下载扩展 v3.3.2 (Edge / Chrome)
+  return `# 北大法宝法律法规批量下载扩展 v3.3.3 (Edge / Chrome)
 
 本扩展（Manifest V3）专为 **北大法宝 V6 (\`https://www.pkulaw.com\`)** 打造，在网页底部注入可视化批量下载控制条，支持自动全选、跨页自动同步下载格式、人机验证实时监测自动恢复与原始压缩包归档。
 
-## 一、 v3.3.2 核心特性
+## 一、 v3.3.3 核心特性
 
 1. **第 1 页弹窗格式录制 + 第 2 页起 1:1 状态同步**：
-   - 第 1 页在「批量下载」弹窗中选择全文格式（纯文本 / 纯净版 / Word / PDF / 超文本）并点击「确定」时，自动记录弹窗内点击路径与全部单选/复选框状态快照。
+   - 起始页在「批量下载」弹窗中选择全文格式（纯文本 / 纯净版 / Word / PDF / 超文本）并点击「确定」时，记录实际选中的格式及字段。
    - 第 2 页起单次精准点击并校验目标格式与复选框状态，彻底杜绝后续分页回退为默认《【北大法宝】目录列表.xls》的问题。
 2. **防重复下载状态锁 (\`isModalLoadingOrClosed\`)**：
    - 精准识别确定按钮的 \`.is-loading\` / \`disabled\` 服务端打包状态，确保每页严格只触发 1 次下载。
@@ -3515,7 +3215,7 @@ export function generateExtensionReadmeMarkdown(): string {
    - **Edge**：地址栏输入 \`edge://extensions\`，开启「开发人员模式」。
    - **Chrome**：地址栏输入 \`chrome://extensions\`，开启「开发者模式」。
 3. 点击 **「加载解压缩的扩展 / 加载已解压的扩展程序」**，选择解压后的文件夹。
-4. 若为覆盖更新，点击扩展卡片上的 **「刷新/重新加载 (⟳)」** 按钮，确认版本号为 \`3.3.2\`，然后刷新北大法宝网页即可使用。
+4. 若为覆盖更新，点击扩展卡片上的 **「刷新/重新加载 (⟳)」** 按钮，确认版本号为 \`3.3.3\`，然后刷新北大法宝网页即可使用。
 `;
 }
 

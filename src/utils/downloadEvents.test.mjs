@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { runInNewContext } from 'node:vm';
-import { generateBackgroundJs } from './extensionGenerator.ts';
+import { generateBackgroundJs, generateContentJs } from './extensionGenerator.ts';
 
 test('only a completed, nonempty PKULaw ZIP succeeds and only the active search tab is notified', async () => {
   const event = () => ({ addListener(listener) { this.fire = listener; } });
@@ -54,4 +54,78 @@ test('only a completed, nonempty PKULaw ZIP succeeds and only the active search 
     [7, 'PKULAW_DOWNLOAD_FAILED', 4],
     [7, 'PKULAW_DOWNLOAD_COMPLETED', 5]
   ]);
+});
+
+test('advanced-search download switches the native radio to plain text before confirming', async () => {
+  const source = generateContentJs({ downloadDir: '测试' });
+  const copyFunctions = (start, end) => {
+    const first = source.indexOf(start);
+    const last = source.indexOf(end, first + start.length);
+    assert.ok(first >= 0 && last > first);
+    return source.slice(first, last);
+  };
+  let confirmClicks = 0;
+  let changeAccepted = true;
+  const radio = (text, checked) => {
+    const label = {
+      textContent: text,
+      getAttribute: () => String(checked)
+    };
+    return {
+      labels: [label],
+      checked,
+      select(value) {
+        this.checked = value;
+        label.getAttribute = () => String(value);
+      }
+    };
+  };
+  const excel = radio('Excel', true);
+  const text = radio(' \uE600 纯文本', false);
+  text.click = () => {
+    if (changeAccepted) {
+      excel.select(false);
+      text.select(true);
+    }
+  };
+  const modal = {
+    contains: () => true,
+    querySelectorAll: (selector) => {
+      if (selector === 'input[type="radio"]') return [excel, text];
+      if (selector === '.el-loading-mask') return [{ hidden: true }];
+      return [];
+    }
+  };
+  const confirm = {
+    tagName: 'BUTTON',
+    textContent: '确定',
+    hasAttribute: () => false,
+    classList: { contains: () => false },
+    click() {
+      assert.equal(text.checked, true);
+      assert.equal(excel.checked, false);
+      confirmClicks++;
+    }
+  };
+  const confirmDownload = runInNewContext(
+    copyFunctions('  const downloadFormats', '  function dispatchRealMouseClick') +
+    copyFunctions('  function isModalLoadingOrClosed', '  // 6.5') +
+    '\nselectFormatAndConfirmInModalAsync',
+    {
+      state: { recordedModalInputsState: [] },
+      pushTrace: () => {},
+      sleep: async () => {},
+      touchBatchLock: () => {},
+      findConfirmButtonInModal: () => confirm,
+      isVisible: (node) => !node.hidden
+    }
+  );
+
+  assert.equal(await confirmDownload(modal, '纯文本'), null);
+  assert.equal(confirmClicks, 1);
+  changeAccepted = false;
+  excel.select(true);
+  text.select(false);
+  assert.match(await confirmDownload(modal, '纯文本'), /无法确认已选中/);
+  assert.equal(confirmClicks, 1);
 });
