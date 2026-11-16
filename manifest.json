@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "北大法宝法律法规批量下载助手 (PKULAW Batch Downloader)",
-  "version": "3.3.1",
+  "version": "3.3.2",
   "description": "在北大法宝官网 (pkulaw.com) 底部注入操作进度条与全自动分页批量下载引擎，支持第2+页精确同步全文格式与单次防重确认、极速翻页间隔，将各页原始压缩包保存至下载目录。",
   "permissions": [
     "storage",
@@ -14,7 +14,7 @@
     "https://pkulaw.com/*"
   ],
   "action": {
-    "default_title": "北大法宝批量下载助手 v3.3.1（点击打开或激活底部进度条）"
+    "default_title": "北大法宝批量下载助手 v3.3.2（点击打开或激活底部进度条）"
   },
   "background": {
     "service_worker": "background.js"

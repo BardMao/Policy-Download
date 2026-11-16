@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         北大法宝法律法规批量下载助手 (Edge & Chrome 网页端自动化扩展 v3.3.1)
+// @name         北大法宝法律法规批量下载助手 (Edge & Chrome 网页端自动化扩展 v3.3.2)
 // @namespace    https://www.pkulaw.com/
-// @version      3.3.1
+// @version      3.3.2
 // @description  在北大法宝官网底部注入动态进度条：支持第2+页精确同步全文格式与单次防重确认、1~2秒极速翻页间隔，将各页原始压缩包保存至下载目录。
 // @author       PKULAW Batch Archiver
 // @match        https://www.pkulaw.com/*
@@ -1732,9 +1732,11 @@
 
   function getActivePageNumber() {
     const active = Array.from(document.querySelectorAll(
-      '.el-pagination .el-pager li.active, .layui-laypage-curr, .ant-pagination-item-active'
+      '.pagination > li.active > a[pageindex], .el-pagination .el-pager li.active, .layui-laypage-curr, .ant-pagination-item-active'
     )).find(function (node) { return isVisible(node); });
-    return active ? Number(active.textContent.trim()) || null : null;
+    if (!active) return null;
+    const page = Number(active.getAttribute('pageindex') || active.textContent.trim());
+    return Number.isSafeInteger(page) && page > 0 ? page : null;
   }
 
   function getPageContentSignature() {
@@ -2495,7 +2497,7 @@
     const stats = countCheckedResultItems();
 
     return {
-      extVersion: '3.3.1',
+      extVersion: '3.3.2',
       url: window.location.href,
       title: document.title,
       stage: state.stage,
@@ -2723,7 +2725,7 @@
       ? '<div style="position:fixed;inset:0;background:rgba(15,23,42,0.65);z-index:2147483646;display:flex;align-items:center;justify-content:center;padding:16px;">' +
           '<div style="width:100%;max-width:480px;background:#0f172a;border:1px solid #334155;border-radius:12px;padding:20px;color:#f8fafc;box-shadow:0 20px 40px rgba(0,0,0,0.5);font-family:system-ui,-apple-system,sans-serif;">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #1e293b;padding-bottom:12px;margin-bottom:14px;">' +
-              '<span style="font-size:15px;font-weight:700;">下载与扩展设置 (v3.3.1)</span>' +
+              '<span style="font-size:15px;font-weight:700;">下载与扩展设置 (v3.3.2)</span>' +
               '<button id="pkulaw-modal-close" style="background:none;border:none;color:#94a3b8;font-size:18px;cursor:pointer;">×</button>' +
             '</div>' +
             '<div style="display:flex;flex-direction:column;gap:12px;font-size:13px;">' +
@@ -2762,7 +2764,7 @@
       ? '<div style="position:fixed;inset:0;background:rgba(15,23,42,0.7);z-index:2147483646;display:flex;align-items:center;justify-content:center;padding:16px;">' +
           '<div style="width:100%;max-width:620px;background:#0f172a;border:1px solid #38bdf8;border-radius:12px;padding:20px;color:#f8fafc;box-shadow:0 20px 40px rgba(0,0,0,0.6);font-family:system-ui,-apple-system,sans-serif;">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #1e293b;padding-bottom:12px;margin-bottom:12px;">' +
-              '<span style="font-size:15px;font-weight:700;color:#38bdf8;">🔍 网页 DOM 元素诊断与单步调试面板 (v3.3.1)</span>' +
+              '<span style="font-size:15px;font-weight:700;color:#38bdf8;">🔍 网页 DOM 元素诊断与单步调试面板 (v3.3.2)</span>' +
               '<button id="pkulaw-diag-close" style="background:none;border:none;color:#94a3b8;font-size:20px;cursor:pointer;">×</button>' +
             '</div>' +
             (state.diagCopiedBanner
@@ -2788,7 +2790,7 @@
       diagModalHtml +
       '<div style="position:fixed;left:0;right:0;bottom:0;height:60px;background:#0f172a;border-top:2px solid #8B1E24;z-index:2147483645;display:flex;align-items:center;justify-content:space-between;padding:0 18px;gap:14px;box-shadow:0 -4px 20px rgba(0,0,0,0.35);font-family:system-ui,-apple-system,sans-serif;">' +
         '<div style="display:flex;align-items:center;gap:8px;white-space:nowrap;">' +
-          '<span style="display:inline-block;padding:4px 8px;border-radius:4px;background:#8B1E24;color:#fff;font-size:12px;font-weight:700;">法宝批量下载扩展 v3.3.1</span>' +
+          '<span style="display:inline-block;padding:4px 8px;border-radius:4px;background:#8B1E24;color:#fff;font-size:12px;font-weight:700;">法宝批量下载扩展 v3.3.2</span>' +
         '</div>' +
         mainActionHtml +
         '<div style="display:flex;align-items:center;gap:8px;white-space:nowrap;">' +
