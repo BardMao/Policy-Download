@@ -3,6 +3,82 @@ import assert from 'node:assert/strict';
 import { runInNewContext } from 'node:vm';
 import { generateBackgroundJs, generateContentJs } from './extensionGenerator.ts';
 
+test('pagination gets a fresh verification window after manual CAPTCHA', async () => {
+  const source = generateContentJs({ downloadDir: '测试' });
+  const start = source.indexOf('  async function navigateToNextPageAndVerify(');
+  const end = source.indexOf('  // --------------------------------------------------------------------------', start);
+  assert.ok(start >= 0 && end > start);
+
+  const target = {};
+  let tick = 0;
+  let resumedAt = 0;
+  let clickCount = 0;
+  let actualPage = 10;
+  let signature = '181. 上一页';
+  const navigate = runInNewContext(source.slice(start, end) + '\nnavigateToNextPageAndVerify', {
+    state: { stopRequested: false },
+    findTargetPageNumberButton: () => target,
+    clickPaginationControlOnce: (node) => {
+      assert.equal(node, target);
+      clickCount++;
+    },
+    sleep: async () => {
+      tick++;
+      if (resumedAt && tick === resumedAt + 12) {
+        actualPage = 11;
+        signature = '201. 目标页';
+      }
+    },
+    detectCaptchaVisible: () => tick === 79,
+    waitIfCaptchaUntilResolved: async () => {
+      resumedAt = tick;
+      return true;
+    },
+    isResultsTableLoading: () => false,
+    getActivePageNumber: () => actualPage,
+    getPageContentSignature: () => signature,
+    pushTrace: () => {}
+  });
+
+  assert.equal(await navigate(11, '181. 上一页'), true);
+  assert.equal(clickCount, 1);
+  assert.ok(tick >= 92);
+});
+
+test('Tencent CAPTCHA is detected only when the iframe actually blocks the page', () => {
+  const source = generateContentJs({ downloadDir: '测试' });
+  const start = source.indexOf('  function isCenteredBlockingOverlay(');
+  const end = source.indexOf('  function sleep(', start);
+  assert.ok(start >= 0 && end > start);
+  const body = {};
+  const container = {
+    parentElement: body,
+    style: { display: 'block', visibility: 'visible', position: 'absolute', zIndex: '2000', opacity: '0' }
+  };
+  let top = -1000000;
+  const frame = {
+    parentElement: container,
+    style: { display: 'inline', visibility: 'visible', position: 'static', zIndex: 'auto', opacity: '1' },
+    getBoundingClientRect: () => ({ width: 300, height: 180, top, bottom: top + 180, left: 350, right: 650 }),
+    contains: (node) => node === frame
+  };
+  const detect = runInNewContext(source.slice(start, end) + '\ndetectCaptchaVisible', {
+    isVisible: () => true,
+    window: { innerWidth: 1000, innerHeight: 800, getComputedStyle: (node) => node.style },
+    document: {
+      body,
+      documentElement: {},
+      elementFromPoint: () => frame,
+      querySelectorAll: (selector) => selector === 'iframe[id^="tcaptcha_iframe"]' ? [frame] : []
+    }
+  });
+  assert.equal(detect(), false);
+  top = 300;
+  assert.equal(detect(), false);
+  container.style.opacity = '1';
+  assert.equal(detect(), true);
+});
+
 test('only a completed, nonempty PKULaw ZIP succeeds and only the active search tab is notified', async () => {
   const event = () => ({ addListener(listener) { this.fire = listener; } });
   const messages = [];

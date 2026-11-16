@@ -1,5 +1,5 @@
 // ============================================================================
-// 北大法宝批量下载助手 - Chrome / Edge Manifest V3 后台服务 (background.js v3.3.4)
+// 北大法宝批量下载助手 - Chrome / Edge Manifest V3 后台服务 (background.js v3.3.5)
 // 功能：1. 安装或重载扩展时立即向已打开的北大法宝标签页注入 page_hook.js 与 content.js
 //       2. 提供特权后台下载通道 (PKULAW_FORCE_OPEN_DOWNLOAD_URL)，突破第 2+ 页浏览器异步弹窗拦截
 //       3. 自动归档 pkulaw.com 下载的原始压缩包至浏览器默认“下载/Downloads”目录下的子文件夹

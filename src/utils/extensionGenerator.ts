@@ -5,7 +5,7 @@ export function generateManifestJson(): string {
   const manifest = {
     manifest_version: 3,
     name: '北大法宝法律法规批量下载助手 (PKULAW Batch Downloader)',
-    version: '3.3.4',
+    version: '3.3.5',
     description:
       '在北大法宝官网 (pkulaw.com) 底部注入操作进度条与全自动分页批量下载引擎，支持第2+页精确同步全文格式与单次防重确认、极速翻页间隔，将各页原始压缩包保存至下载目录。',
     permissions: ['storage', 'downloads', 'scripting'],
@@ -15,7 +15,7 @@ export function generateManifestJson(): string {
       'https://pkulaw.com/*',
     ],
     action: {
-      default_title: '北大法宝批量下载助手 v3.3.4（点击打开或激活底部进度条）',
+      default_title: '北大法宝批量下载助手 v3.3.5（点击打开或激活底部进度条）',
     },
     background: {
       service_worker: 'background.js',
@@ -50,7 +50,7 @@ export function generateManifestJson(): string {
 export function generatePageHookJs(): string {
   const lines = [
     '// ============================================================================',
-    '// 北大法宝批量下载助手 - 页面主世界钩子 (page_hook.js v3.3.4, world: MAIN)',
+    '// 北大法宝批量下载助手 - 页面主世界钩子 (page_hook.js v3.3.5, world: MAIN)',
     '// 核心作用：当第 2 页及后续分页由扩展定时器自动点击「确定」触发下载时，',
     '// 网页处于无用户手势状态 (navigator.userActivation.isActive === false)，',
     '// 浏览器内置弹窗拦截器会拦截网页的 window.open / target="_blank" 表单提交，导致后续页无法下载。',
@@ -188,7 +188,7 @@ export function generateBackgroundJs(settings: AppSettings): string {
 
   const lines = [
     '// ============================================================================',
-    '// 北大法宝批量下载助手 - Chrome / Edge Manifest V3 后台服务 (background.js v3.3.4)',
+    '// 北大法宝批量下载助手 - Chrome / Edge Manifest V3 后台服务 (background.js v3.3.5)',
     '// 功能：1. 安装或重载扩展时立即向已打开的北大法宝标签页注入 page_hook.js 与 content.js',
     '//       2. 提供特权后台下载通道 (PKULAW_FORCE_OPEN_DOWNLOAD_URL)，突破第 2+ 页浏览器异步弹窗拦截',
     '//       3. 自动归档 pkulaw.com 下载的原始压缩包至浏览器默认“下载/Downloads”目录下的子文件夹',
@@ -412,9 +412,9 @@ export function generateContentJs(settings: AppSettings): string {
       .replace(/^\/+|\/+$/g, '') || 'PKULaw_Downloads';
 
   return `// ==UserScript==
-// @name         北大法宝法律法规批量下载助手 (Edge & Chrome 网页端自动化扩展 v3.3.4)
+// @name         北大法宝法律法规批量下载助手 (Edge & Chrome 网页端自动化扩展 v3.3.5)
 // @namespace    https://www.pkulaw.com/
-// @version      3.3.4
+// @version      3.3.5
 // @description  在北大法宝官网底部注入动态进度条：支持第2+页精确同步全文格式与单次防重确认、1~2秒极速翻页间隔，将各页原始压缩包保存至下载目录。
 // @author       PKULAW Batch Archiver
 // @match        https://www.pkulaw.com/*
@@ -1900,9 +1900,11 @@ export function generateContentJs(settings: AppSettings): string {
   }
 
   function isResultsTableLoading() {
+    const firstResult = findResultItemCheckboxes()[0];
+    if (!firstResult) return false;
     const masks = document.querySelectorAll('.el-loading-mask, .layui-layer-loading, .ant-spin-spinning');
     for (let i = 0; i < masks.length; i++) {
-      if (isVisible(masks[i])) return true;
+      if (isVisible(masks[i]) && masks[i].parentElement?.contains(firstResult)) return true;
     }
     return false;
   }
@@ -1937,34 +1939,36 @@ export function generateContentJs(settings: AppSettings): string {
   }
 
   async function navigateToNextPageAndVerify(targetPageNumber, prevSignature) {
-    // 1. 优先点击目标页码数字按钮（如第 2 页点击 "2"，第 3 页点击 "3"），天然具备幂等性，绝不会从第 1 页跳到第 3 页
-    const targetPageBtn = findTargetPageNumberButton(targetPageNumber);
-    const nextBtn = findNextPageButton();
+    const control = findTargetPageNumberButton(targetPageNumber) || findNextPageButton();
+    if (!control) return false;
+    pushTrace('page_navigation', 'target=' + targetPageNumber);
+    clickPaginationControlOnce(control);
 
-    if (targetPageBtn) {
-      clickPaginationControlOnce(targetPageBtn);
-    } else if (nextBtn) {
-      clickPaginationControlOnce(nextBtn);
-    } else {
-      return false;
-    }
-
-    // 2. 高频轮询（每 180ms 一次）等待新页面 AJAX 列表真正替换完成（特征签名发生变化且加载遮罩消失）
-    for (let tick = 0; tick < 36 && !state.stopRequested; tick++) {
-      await sleep(180);
+    let ticksRemaining = 80;
+    let verifiedSignature = '';
+    while (ticksRemaining > 0 && !state.stopRequested) {
+      await sleep(250);
+      ticksRemaining--;
       if (detectCaptchaVisible()) {
-        const ok = await waitIfCaptchaUntilResolved();
-        if (!ok || state.stopRequested) return false;
+        pushTrace('page_navigation_captcha', 'target=' + targetPageNumber);
+        if (!await waitIfCaptchaUntilResolved() || state.stopRequested) return false;
+        // 验证结束后给法宝重新请求和渲染目标页的完整时间。
+        ticksRemaining = 80;
+        verifiedSignature = '';
+        pushTrace('page_navigation_resumed', 'target=' + targetPageNumber);
       }
-      if (isResultsTableLoading()) continue;
+      if (isResultsTableLoading() || getActivePageNumber() !== targetPageNumber) {
+        verifiedSignature = '';
+        continue;
+      }
       const curSig = getPageContentSignature();
-      const cbs = findResultItemCheckboxes();
-      if (getActivePageNumber() === targetPageNumber && cbs.length > 0 && curSig && curSig !== prevSignature) {
-        await sleep(260);
+      if (curSig && curSig !== prevSignature && curSig === verifiedSignature) {
+        pushTrace('page_navigation_verified', 'page=' + targetPageNumber);
         return true;
       }
+      verifiedSignature = curSig !== prevSignature ? curSig : '';
     }
-
+    pushTrace('page_navigation_timeout', 'target=' + targetPageNumber + ' | active=' + getActivePageNumber());
     return false;
   }
 
@@ -1997,10 +2001,10 @@ export function generateContentJs(settings: AppSettings): string {
     let curr = el;
     while (curr && curr !== document.body && curr !== document.documentElement) {
       const st = window.getComputedStyle(curr);
+      if (st.display === 'none' || st.visibility === 'hidden' || Number(st.opacity) === 0) return false;
       const z = parseInt(st.zIndex, 10) || 0;
       if ((st.position === 'fixed' || st.position === 'absolute') && z >= 90) {
         hasFloatingLayer = true;
-        break;
       }
       curr = curr.parentElement;
     }
@@ -2022,7 +2026,9 @@ export function generateContentJs(settings: AppSettings): string {
       '.geetest_wind',
       '.nc-container',
       '.yidun_modal',
-      '.tcaptcha-transform'
+      '.tcaptcha-transform',
+      'iframe[id^="tcaptcha_iframe"]',
+      '[id^="tcaptcha_transform"]'
     ];
     for (let i = 0; i < sliderSelectors.length; i++) {
       const nodes = document.querySelectorAll(sliderSelectors[i]);
@@ -2601,7 +2607,7 @@ export function generateContentJs(settings: AppSettings): string {
     const stats = countCheckedResultItems();
 
     return {
-      extVersion: '3.3.4',
+      extVersion: '3.3.5',
       url: window.location.href,
       title: document.title,
       stage: state.stage,
@@ -2829,7 +2835,7 @@ export function generateContentJs(settings: AppSettings): string {
       ? '<div style="position:fixed;inset:0;background:rgba(15,23,42,0.65);z-index:2147483646;display:flex;align-items:center;justify-content:center;padding:16px;">' +
           '<div style="width:100%;max-width:480px;background:#0f172a;border:1px solid #334155;border-radius:12px;padding:20px;color:#f8fafc;box-shadow:0 20px 40px rgba(0,0,0,0.5);font-family:system-ui,-apple-system,sans-serif;">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #1e293b;padding-bottom:12px;margin-bottom:14px;">' +
-              '<span style="font-size:15px;font-weight:700;">下载与扩展设置 (v3.3.4)</span>' +
+              '<span style="font-size:15px;font-weight:700;">下载与扩展设置 (v3.3.5)</span>' +
               '<button id="pkulaw-modal-close" style="background:none;border:none;color:#94a3b8;font-size:18px;cursor:pointer;">×</button>' +
             '</div>' +
             '<div style="display:flex;flex-direction:column;gap:12px;font-size:13px;">' +
@@ -2868,7 +2874,7 @@ export function generateContentJs(settings: AppSettings): string {
       ? '<div style="position:fixed;inset:0;background:rgba(15,23,42,0.7);z-index:2147483646;display:flex;align-items:center;justify-content:center;padding:16px;">' +
           '<div style="width:100%;max-width:620px;background:#0f172a;border:1px solid #38bdf8;border-radius:12px;padding:20px;color:#f8fafc;box-shadow:0 20px 40px rgba(0,0,0,0.6);font-family:system-ui,-apple-system,sans-serif;">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #1e293b;padding-bottom:12px;margin-bottom:12px;">' +
-              '<span style="font-size:15px;font-weight:700;color:#38bdf8;">🔍 网页 DOM 元素诊断与单步调试面板 (v3.3.4)</span>' +
+              '<span style="font-size:15px;font-weight:700;color:#38bdf8;">🔍 网页 DOM 元素诊断与单步调试面板 (v3.3.5)</span>' +
               '<button id="pkulaw-diag-close" style="background:none;border:none;color:#94a3b8;font-size:20px;cursor:pointer;">×</button>' +
             '</div>' +
             (state.diagCopiedBanner
@@ -2894,7 +2900,7 @@ export function generateContentJs(settings: AppSettings): string {
       diagModalHtml +
       '<div style="position:fixed;left:0;right:0;bottom:0;height:60px;background:#0f172a;border-top:2px solid #8B1E24;z-index:2147483645;display:flex;align-items:center;justify-content:space-between;padding:0 18px;gap:14px;box-shadow:0 -4px 20px rgba(0,0,0,0.35);font-family:system-ui,-apple-system,sans-serif;">' +
         '<div style="display:flex;align-items:center;gap:8px;white-space:nowrap;">' +
-          '<span style="display:inline-block;padding:4px 8px;border-radius:4px;background:#8B1E24;color:#fff;font-size:12px;font-weight:700;">法宝批量下载扩展 v3.3.4</span>' +
+          '<span style="display:inline-block;padding:4px 8px;border-radius:4px;background:#8B1E24;color:#fff;font-size:12px;font-weight:700;">法宝批量下载扩展 v3.3.5</span>' +
         '</div>' +
         mainActionHtml +
         '<div style="display:flex;align-items:center;gap:8px;white-space:nowrap;">' +
@@ -3162,32 +3168,32 @@ export function generateContentJs(settings: AppSettings): string {
 export function generateExtensionReadme(): string {
   return [
     '====================================================================',
-    '北大法宝法律法规批量下载扩展 v3.3.4 (适用于 Microsoft Edge 与 Google Chrome)',
+    '北大法宝法律法规批量下载扩展 v3.3.5 (适用于 Microsoft Edge 与 Google Chrome)',
     '====================================================================',
     '',
-    '【一、 v3.3.4 核心升级说明】',
+    '【一、 v3.3.5 核心升级说明】',
     '1. 彻底解决「第 2+ 页下载成了《【北大法宝】目录列表.xls》而非第 1 页所选法规全文压缩包 (.zip)」的问题：',
     '   - 根因修复：v3.2.0 在第 2+ 页对同一个单选框/复选框连续派发了 3 次点击（导致已勾选项被取消回退为默认的 Excel 目录列表），且未录制第 1 页用户在弹窗内对各个单选/复选框的操作。',
     '   - 记录起始页的下载格式及字段。后续页使用同名的原生单选框切换格式，经读回确认后提交。',
     '2. 彻底解决「同一页重复下载多次（目录列表 (1)、(2)...）」的问题：',
     '   - 根因修复：法宝点击「确定」后按钮会进入 Element UI 的 .is-loading 禁用等待打包状态（耗时约 3~8 秒），v3.2.0 在弹窗未关闭时于 220ms、970ms、6500ms 重复点击了确定按钮，导致服务端收到多次请求。',
-    '   - v3.3.4 新增 isModalLoadingOrClosed 状态锁：精准点击真正的 <button> 一次后，一旦检测到按钮进入 .is-loading 或 disabled 状态即停止重点，静候服务端完成 ZIP 打包。',
+    '   - v3.3.5 新增 isModalLoadingOrClosed 状态锁：精准点击真正的 <button> 一次后，一旦检测到按钮进入 .is-loading 或 disabled 状态即停止重点，静候服务端完成 ZIP 打包。',
     '3. 隔页等待随机时间间隔缩至最小：',
     '   - 默认隔页随机等待时间已从 4.5s~8.5s 大幅缩短为 1.0s~2.0s（并在底部「⚙ 下载设置」中提供一键切换「⚡ 极速模式 0.5s~1.2s」按钮）。',
     '',
     '【二、 如何更新到 Edge / Chrome 浏览器】',
     '1. 将最新下载的 PKULaw_Edge_Chrome_Extension.zip 解压覆盖到原文件夹。',
     '2. 打开 Edge 地址栏输入 edge://extensions（Chrome 输入 chrome://extensions）。',
-    '3. 点击本扩展卡片上的「重新加载」按钮，确认版本号变为 3.3.4，随后刷新北大法宝网页即可。',
+    '3. 点击本扩展卡片上的「重新加载」按钮，确认版本号变为 3.3.5，随后刷新北大法宝网页即可。',
   ].join('\r\n');
 }
 
 export function generateExtensionReadmeMarkdown(): string {
-  return `# 北大法宝法律法规批量下载扩展 v3.3.4 (Edge / Chrome)
+  return `# 北大法宝法律法规批量下载扩展 v3.3.5 (Edge / Chrome)
 
 本扩展（Manifest V3）专为 **北大法宝 V6 (\`https://www.pkulaw.com\`)** 打造，在网页底部注入可视化批量下载控制条，支持自动全选、跨页自动同步下载格式、人机验证实时监测自动恢复与原始压缩包归档。
 
-## 一、 v3.3.4 核心特性
+## 一、 v3.3.5 核心特性
 
 1. **第 1 页弹窗格式录制 + 第 2 页起 1:1 状态同步**：
    - 起始页在「批量下载」弹窗中选择全文格式（纯文本 / 纯净版 / Word / PDF / 超文本）并点击「确定」时，记录实际选中的格式及字段。
@@ -3206,7 +3212,7 @@ export function generateExtensionReadmeMarkdown(): string {
    - **Edge**：地址栏输入 \`edge://extensions\`，开启「开发人员模式」。
    - **Chrome**：地址栏输入 \`chrome://extensions\`，开启「开发者模式」。
 3. 点击 **「加载解压缩的扩展 / 加载已解压的扩展程序」**，选择解压后的文件夹。
-4. 若为覆盖更新，点击扩展卡片上的 **「刷新/重新加载 (⟳)」** 按钮，确认版本号为 \`3.3.4\`，然后刷新北大法宝网页即可使用。
+4. 若为覆盖更新，点击扩展卡片上的 **「刷新/重新加载 (⟳)」** 按钮，确认版本号为 \`3.3.5\`，然后刷新北大法宝网页即可使用。
 `;
 }
 

@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         北大法宝法律法规批量下载助手 (Edge & Chrome 网页端自动化扩展 v3.3.4)
+// @name         北大法宝法律法规批量下载助手 (Edge & Chrome 网页端自动化扩展 v3.3.5)
 // @namespace    https://www.pkulaw.com/
-// @version      3.3.4
+// @version      3.3.5
 // @description  在北大法宝官网底部注入动态进度条：支持第2+页精确同步全文格式与单次防重确认、1~2秒极速翻页间隔，将各页原始压缩包保存至下载目录。
 // @author       PKULAW Batch Archiver
 // @match        https://www.pkulaw.com/*
@@ -1487,9 +1487,11 @@
   }
 
   function isResultsTableLoading() {
+    const firstResult = findResultItemCheckboxes()[0];
+    if (!firstResult) return false;
     const masks = document.querySelectorAll('.el-loading-mask, .layui-layer-loading, .ant-spin-spinning');
     for (let i = 0; i < masks.length; i++) {
-      if (isVisible(masks[i])) return true;
+      if (isVisible(masks[i]) && masks[i].parentElement?.contains(firstResult)) return true;
     }
     return false;
   }
@@ -1524,34 +1526,36 @@
   }
 
   async function navigateToNextPageAndVerify(targetPageNumber, prevSignature) {
-    // 1. 优先点击目标页码数字按钮（如第 2 页点击 "2"，第 3 页点击 "3"），天然具备幂等性，绝不会从第 1 页跳到第 3 页
-    const targetPageBtn = findTargetPageNumberButton(targetPageNumber);
-    const nextBtn = findNextPageButton();
+    const control = findTargetPageNumberButton(targetPageNumber) || findNextPageButton();
+    if (!control) return false;
+    pushTrace('page_navigation', 'target=' + targetPageNumber);
+    clickPaginationControlOnce(control);
 
-    if (targetPageBtn) {
-      clickPaginationControlOnce(targetPageBtn);
-    } else if (nextBtn) {
-      clickPaginationControlOnce(nextBtn);
-    } else {
-      return false;
-    }
-
-    // 2. 高频轮询（每 180ms 一次）等待新页面 AJAX 列表真正替换完成（特征签名发生变化且加载遮罩消失）
-    for (let tick = 0; tick < 36 && !state.stopRequested; tick++) {
-      await sleep(180);
+    let ticksRemaining = 80;
+    let verifiedSignature = '';
+    while (ticksRemaining > 0 && !state.stopRequested) {
+      await sleep(250);
+      ticksRemaining--;
       if (detectCaptchaVisible()) {
-        const ok = await waitIfCaptchaUntilResolved();
-        if (!ok || state.stopRequested) return false;
+        pushTrace('page_navigation_captcha', 'target=' + targetPageNumber);
+        if (!await waitIfCaptchaUntilResolved() || state.stopRequested) return false;
+        // 验证结束后给法宝重新请求和渲染目标页的完整时间。
+        ticksRemaining = 80;
+        verifiedSignature = '';
+        pushTrace('page_navigation_resumed', 'target=' + targetPageNumber);
       }
-      if (isResultsTableLoading()) continue;
+      if (isResultsTableLoading() || getActivePageNumber() !== targetPageNumber) {
+        verifiedSignature = '';
+        continue;
+      }
       const curSig = getPageContentSignature();
-      const cbs = findResultItemCheckboxes();
-      if (getActivePageNumber() === targetPageNumber && cbs.length > 0 && curSig && curSig !== prevSignature) {
-        await sleep(260);
+      if (curSig && curSig !== prevSignature && curSig === verifiedSignature) {
+        pushTrace('page_navigation_verified', 'page=' + targetPageNumber);
         return true;
       }
+      verifiedSignature = curSig !== prevSignature ? curSig : '';
     }
-
+    pushTrace('page_navigation_timeout', 'target=' + targetPageNumber + ' | active=' + getActivePageNumber());
     return false;
   }
 
@@ -1584,10 +1588,10 @@
     let curr = el;
     while (curr && curr !== document.body && curr !== document.documentElement) {
       const st = window.getComputedStyle(curr);
+      if (st.display === 'none' || st.visibility === 'hidden' || Number(st.opacity) === 0) return false;
       const z = parseInt(st.zIndex, 10) || 0;
       if ((st.position === 'fixed' || st.position === 'absolute') && z >= 90) {
         hasFloatingLayer = true;
-        break;
       }
       curr = curr.parentElement;
     }
@@ -1609,7 +1613,9 @@
       '.geetest_wind',
       '.nc-container',
       '.yidun_modal',
-      '.tcaptcha-transform'
+      '.tcaptcha-transform',
+      'iframe[id^="tcaptcha_iframe"]',
+      '[id^="tcaptcha_transform"]'
     ];
     for (let i = 0; i < sliderSelectors.length; i++) {
       const nodes = document.querySelectorAll(sliderSelectors[i]);
@@ -2188,7 +2194,7 @@
     const stats = countCheckedResultItems();
 
     return {
-      extVersion: '3.3.4',
+      extVersion: '3.3.5',
       url: window.location.href,
       title: document.title,
       stage: state.stage,
@@ -2416,7 +2422,7 @@
       ? '<div style="position:fixed;inset:0;background:rgba(15,23,42,0.65);z-index:2147483646;display:flex;align-items:center;justify-content:center;padding:16px;">' +
           '<div style="width:100%;max-width:480px;background:#0f172a;border:1px solid #334155;border-radius:12px;padding:20px;color:#f8fafc;box-shadow:0 20px 40px rgba(0,0,0,0.5);font-family:system-ui,-apple-system,sans-serif;">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #1e293b;padding-bottom:12px;margin-bottom:14px;">' +
-              '<span style="font-size:15px;font-weight:700;">下载与扩展设置 (v3.3.4)</span>' +
+              '<span style="font-size:15px;font-weight:700;">下载与扩展设置 (v3.3.5)</span>' +
               '<button id="pkulaw-modal-close" style="background:none;border:none;color:#94a3b8;font-size:18px;cursor:pointer;">×</button>' +
             '</div>' +
             '<div style="display:flex;flex-direction:column;gap:12px;font-size:13px;">' +
@@ -2455,7 +2461,7 @@
       ? '<div style="position:fixed;inset:0;background:rgba(15,23,42,0.7);z-index:2147483646;display:flex;align-items:center;justify-content:center;padding:16px;">' +
           '<div style="width:100%;max-width:620px;background:#0f172a;border:1px solid #38bdf8;border-radius:12px;padding:20px;color:#f8fafc;box-shadow:0 20px 40px rgba(0,0,0,0.6);font-family:system-ui,-apple-system,sans-serif;">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #1e293b;padding-bottom:12px;margin-bottom:12px;">' +
-              '<span style="font-size:15px;font-weight:700;color:#38bdf8;">🔍 网页 DOM 元素诊断与单步调试面板 (v3.3.4)</span>' +
+              '<span style="font-size:15px;font-weight:700;color:#38bdf8;">🔍 网页 DOM 元素诊断与单步调试面板 (v3.3.5)</span>' +
               '<button id="pkulaw-diag-close" style="background:none;border:none;color:#94a3b8;font-size:20px;cursor:pointer;">×</button>' +
             '</div>' +
             (state.diagCopiedBanner
@@ -2481,7 +2487,7 @@
       diagModalHtml +
       '<div style="position:fixed;left:0;right:0;bottom:0;height:60px;background:#0f172a;border-top:2px solid #8B1E24;z-index:2147483645;display:flex;align-items:center;justify-content:space-between;padding:0 18px;gap:14px;box-shadow:0 -4px 20px rgba(0,0,0,0.35);font-family:system-ui,-apple-system,sans-serif;">' +
         '<div style="display:flex;align-items:center;gap:8px;white-space:nowrap;">' +
-          '<span style="display:inline-block;padding:4px 8px;border-radius:4px;background:#8B1E24;color:#fff;font-size:12px;font-weight:700;">法宝批量下载扩展 v3.3.4</span>' +
+          '<span style="display:inline-block;padding:4px 8px;border-radius:4px;background:#8B1E24;color:#fff;font-size:12px;font-weight:700;">法宝批量下载扩展 v3.3.5</span>' +
         '</div>' +
         mainActionHtml +
         '<div style="display:flex;align-items:center;gap:8px;white-space:nowrap;">' +
