@@ -3673,6 +3673,34 @@ export function generateExtensionReadme(): string {
   ].join('\r\n');
 }
 
+export function generateExtensionReadmeMarkdown(): string {
+  return `# 北大法宝法律法规批量下载扩展 v3.3.0 (Edge / Chrome)
+
+本扩展（Manifest V3）专为 **北大法宝 V6 (\`https://www.pkulaw.com\`)** 打造，在网页底部注入可视化批量下载控制条，支持自动全选、跨页自动同步下载格式、人机验证实时监测自动恢复与原始压缩包归档。
+
+## 一、 v3.3.0 核心特性
+
+1. **第 1 页弹窗格式录制 + 第 2 页起 1:1 状态同步**：
+   - 第 1 页在「批量下载」弹窗中选择全文格式（纯文本 / 纯净版 / Word / PDF / 超文本）并点击「确定」时，自动记录弹窗内点击路径与全部单选/复选框状态快照。
+   - 第 2 页起单次精准点击并校验目标格式与复选框状态，彻底杜绝后续分页回退为默认《【北大法宝】目录列表.xls》的问题。
+2. **防重复下载状态锁 (\`isModalLoadingOrClosed\`)**：
+   - 精准识别确定按钮的 \`.is-loading\` / \`disabled\` 服务端打包状态，确保每页严格只触发 1 次下载。
+3. **三档隔页等待速度预设**：
+   - 默认间隔缩短至 \`1.0s ~ 2.0s\`，并可在底部「⚙ 下载设置」中一键切换「⚡ 极速模式 (\`0.5s ~ 1.2s\`)」、「🚀 默认快速 (\`1.0s ~ 2.0s\`)」或「🛡️ 稳妥防封 (\`3.0s ~ 5.0s\`)」。
+4. **人工验证自动监测恢复**：
+   - 仅当滑块/验证码浮层居中遮挡视口时暂停，用户在网页内完成验证后全自动恢复下载。
+
+## 二、 安装与更新步骤
+
+1. 将压缩包解压到本地固定文件夹（如 \`D:\\PKULaw_Extension\`）。
+2. 打开浏览器扩展管理页面：
+   - **Edge**：地址栏输入 \`edge://extensions\`，开启「开发人员模式」。
+   - **Chrome**：地址栏输入 \`chrome://extensions\`，开启「开发者模式」。
+3. 点击 **「加载解压缩的扩展 / 加载已解压的扩展程序」**，选择解压后的文件夹。
+4. 若为覆盖更新，点击扩展卡片上的 **「刷新/重新加载 (⟳)」** 按钮，确认版本号为 \`3.3.0\`，然后刷新北大法宝网页即可使用。
+`;
+}
+
 export function buildExtensionZipBytes(settings: AppSettings): Uint8Array {
   const entries: ZipFileEntry[] = [
     {
@@ -3692,9 +3720,14 @@ export function buildExtensionZipBytes(settings: AppSettings): Uint8Array {
       content: generateContentJs(settings),
     },
     {
+      name: 'README.md',
+      content: generateExtensionReadmeMarkdown(),
+    },
+    {
       name: 'README_安装与测试指南.txt',
       content: generateExtensionReadme(),
     },
   ];
   return createZipArchive(entries);
 }
+
