@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         北大法宝法律法规批量下载助手 (Edge & Chrome 网页端自动化扩展 v3.3.3)
+// @name         北大法宝法律法规批量下载助手 (Edge & Chrome 网页端自动化扩展 v3.3.4)
 // @namespace    https://www.pkulaw.com/
-// @version      3.3.3
+// @version      3.3.4
 // @description  在北大法宝官网底部注入动态进度条：支持第2+页精确同步全文格式与单次防重确认、1~2秒极速翻页间隔，将各页原始压缩包保存至下载目录。
 // @author       PKULAW Batch Archiver
 // @match        https://www.pkulaw.com/*
@@ -152,9 +152,7 @@
     completedZipFiles: 0,
     chosenFormat: session.chosenFormat || config.lastChosenFormat || '纯净版',
     recordedConfirmBtn: null,
-    recordedConfirmRawTarget: null,
     recordedConfirmText: '',
-    recordedConfirmModalRoot: null,
     recordedModalInputsState: [],
     lastOpenModalHtml: '',
     eventTrace: [],
@@ -1072,7 +1070,7 @@
       txt.includes('确认') ||
       txt.includes('取消') ||
       Boolean(el.querySelector && el.querySelector('button, .el-button, .layui-layer-btn0, input[type="button"], input[type="submit"], a[class*="btn" i]'));
-    return hasFormat && hasAction;
+    return hasFormat && hasAction && Boolean(el.querySelector('input[type="radio"]'));
   }
 
   function cacheModalHtmlSnapshot(modalEl) {
@@ -1083,21 +1081,10 @@
   }
 
   function findCustomDownloadModal() {
-    // 0. 优先检查第 1 页用户点击时记录的弹窗根节点（若当前可见）
-    if (
-      state.recordedConfirmModalRoot &&
-      document.body.contains(state.recordedConfirmModalRoot) &&
-      isVisible(state.recordedConfirmModalRoot) &&
-      (!state.recordedConfirmModalRoot.querySelector || !state.recordedConfirmModalRoot.querySelector('.el-table, .batch-container'))
-    ) {
-      cacheModalHtmlSnapshot(state.recordedConfirmModalRoot);
-      return state.recordedConfirmModalRoot;
-    }
-
     // 1. 优先匹配标准 UI 框架的对话框根节点（如 .el-dialog, .layui-layer, .el-message-box, .ant-modal, [role="dialog"]）
     const rootDialogSelectors = '.el-dialog, .layui-layer, .el-message-box, .ant-modal, [role="dialog"], .modal-dialog, .modal, .dialog, .popup';
     const rootDialogs = document.querySelectorAll(rootDialogSelectors);
-    for (let i = 0; i < rootDialogs.length; i++) {
+    for (let i = rootDialogs.length - 1; i >= 0; i--) {
       const el = rootDialogs[i];
       if (el.closest && el.closest('#pkulaw-ext-root')) continue;
       if (isDialogSubPart(el)) continue;
@@ -1244,15 +1231,6 @@
       scopes.push(dialogRoot);
     }
 
-    // 1. 优先复用用户在第 1 页弹窗中亲手点击过的「确定」按钮节点（若仍在 DOM 中）
-    if (state.recordedConfirmBtn && document.body.contains(state.recordedConfirmBtn) && isVisible(state.recordedConfirmBtn)) {
-      for (let s = 0; s < scopes.length; s++) {
-        if (scopes[s].contains(state.recordedConfirmBtn)) {
-          return state.recordedConfirmBtn;
-        }
-      }
-    }
-
     // 2. 第一优先级：严格匹配真正的 <button> / <input> / .el-button 节点（防止被外层 <div class="confirm-btn"> 抢先命中而导致重复点击）
     for (let s = 0; s < scopes.length; s++) {
       const scope = scopes[s];
@@ -1307,15 +1285,13 @@
   }
 
   function isModalLoadingOrClosed(modalEl, btnEl) {
-    return !isVisible(modalEl) || btnEl.disabled || btnEl.hasAttribute('disabled') ||
-      btnEl.classList.contains('is-loading') ||
-      Array.from(modalEl.querySelectorAll('.el-loading-mask')).some(function (node) {
-        return isVisible(node);
-      });
+    return !modalEl.isConnected || !modalEl.contains(btnEl) ||
+      !isVisible(modalEl) || !isVisible(btnEl) || btnEl.disabled ||
+      btnEl.getAttribute('aria-disabled') === 'true' || btnEl.classList.contains('is-loading');
   }
 
   // 通过法宝原生表单控件触发 change，并读回实际选择。Vue 可以在切换格式后重建字段区域。
-  async function syncModalFormatOptionsWithPage1(modalEl, targetFormat) {
+  async function syncModalFormatOptionsWithPage1(modalEl, targetFormat, attemptedInputs) {
     const formats = getModalOptions(modalEl, 'radio').filter(function (option) {
       return option.labelText === targetFormat && !option.input.disabled;
     });
@@ -1325,6 +1301,8 @@
     }
 
     if (!formats[0].checked) {
+      if (attemptedInputs.has(formats[0].input)) return false;
+      attemptedInputs.add(formats[0].input);
       formats[0].input.click();
       await sleep(150);
     }
@@ -1345,20 +1323,37 @@
     return selectedFormat === targetFormat;
   }
 
-  async function selectFormatAndConfirmInModalAsync(modalEl, targetFormat) {
-    if (!await syncModalFormatOptionsWithPage1(modalEl, targetFormat)) {
-      return '无法确认已选中「' + targetFormat + '」';
+  async function selectFormatAndConfirmInModalAsync(targetFormat) {
+    const attemptedInputs = new WeakSet();
+    let syncedModal = null;
+    let reason = '未找到可用的下载弹窗';
+    for (let attempt = 0; attempt < 50 && !state.stopRequested; attempt++) {
+      const modal = findCustomDownloadModal();
+      if (modal) {
+        if (modal !== syncedModal || detectSelectedFormatInModal(modal) !== targetFormat) {
+          if (await syncModalFormatOptionsWithPage1(modal, targetFormat, attemptedInputs)) {
+            syncedModal = modal;
+          }
+        }
+        // Vue 可能替换弹窗或异步解锁按钮，确认只使用当前有效节点。
+        const liveModal = findCustomDownloadModal();
+        if (liveModal && detectSelectedFormatInModal(liveModal) === targetFormat) {
+          const confirm = findConfirmButtonInModal(liveModal);
+          reason = confirm ? '下载弹窗的确定按钮仍未就绪' : '未找到下载弹窗的确定按钮';
+          if (!state.stopRequested && liveModal === syncedModal && confirm && !isModalLoadingOrClosed(liveModal, confirm)) {
+            touchBatchLock(true);
+            pushTrace('modal_click_confirm', confirm.tagName + ':' + (confirm.textContent || '').trim().slice(0, 16));
+            confirm.click();
+            return null;
+          }
+        } else {
+          reason = '无法确认已选中「' + targetFormat + '」';
+        }
+      }
+      await sleep(200);
     }
-
-    const confirmBtn = findConfirmButtonInModal(modalEl);
-    if (!confirmBtn || isModalLoadingOrClosed(modalEl, confirmBtn)) {
-      return '下载弹窗的确定按钮不可用';
-    }
-
-    touchBatchLock(true);
-    pushTrace('modal_click_confirm', confirmBtn.tagName + ':' + (confirmBtn.textContent || '').trim().slice(0, 16));
-    confirmBtn.click();
-    return null;
+    pushTrace('modal_confirm_timeout', reason);
+    return reason;
   }
 
 
@@ -1691,10 +1686,9 @@
   }
 
   // 统一的「第 1 页确认完成并启动跨页循环」入口（支持点击监听与下载信号自愈双重触发，且严格幂等）
-  function triggerFirstPageConfirmedAndStartLoop(triggerSource, modalEl, btnEl, rawTarget) {
+  function triggerFirstPageConfirmedAndStartLoop(triggerSource, modalEl, btnEl) {
     if (state.loopRunning || state.stage === 'downloading') return;
     if (btnEl) state.recordedConfirmBtn = btnEl;
-    if (rawTarget) state.recordedConfirmRawTarget = rawTarget;
 
     if (modalEl) {
       const snap = snapshotModalInputsState(modalEl);
@@ -1790,14 +1784,12 @@
       ) {
         const realButton = (btnEl.tagName === 'BUTTON' ? btnEl : (btnEl.querySelector ? btnEl.querySelector('button') : null)) || btnEl;
         if (dialogRoot && (!dialogRoot.querySelector || !dialogRoot.querySelector('.el-table, .batch-container'))) {
-          state.recordedConfirmModalRoot = dialogRoot;
           state.recordedConfirmBtn = realButton;
-          state.recordedConfirmRawTarget = target;
           if (btnText && btnText.length <= 8) {
             state.recordedConfirmText = btnText;
           }
         }
-        triggerFirstPageConfirmedAndStartLoop('user_click_' + (btnText || rawText || 'confirm'), dialogRoot || modal, realButton, target);
+        triggerFirstPageConfirmedAndStartLoop('user_click_' + (btnText || rawText || 'confirm'), dialogRoot || modal, realButton);
       }
     },
     true
@@ -1985,7 +1977,6 @@
     state.completedZipFiles = 0;
     state.currentPage = getActivePageNumber() || 1;
     state.recordedModalInputsState = [];
-    state.recordedConfirmModalRoot = null;
     state.recordedConfirmBtn = null;
     state.recordedConfirmText = '';
     detectPkulawDomState();
@@ -2140,7 +2131,7 @@
         }
 
         expectZip();
-        const confirmError = await selectFormatAndConfirmInModalAsync(modal, state.chosenFormat);
+        const confirmError = await selectFormatAndConfirmInModalAsync(state.chosenFormat);
         if (confirmError) {
           stopWithError('第 ' + targetPage + ' 页' + confirmError + '，已暂停。');
           break;
@@ -2197,7 +2188,7 @@
     const stats = countCheckedResultItems();
 
     return {
-      extVersion: '3.3.3',
+      extVersion: '3.3.4',
       url: window.location.href,
       title: document.title,
       stage: state.stage,
@@ -2425,7 +2416,7 @@
       ? '<div style="position:fixed;inset:0;background:rgba(15,23,42,0.65);z-index:2147483646;display:flex;align-items:center;justify-content:center;padding:16px;">' +
           '<div style="width:100%;max-width:480px;background:#0f172a;border:1px solid #334155;border-radius:12px;padding:20px;color:#f8fafc;box-shadow:0 20px 40px rgba(0,0,0,0.5);font-family:system-ui,-apple-system,sans-serif;">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #1e293b;padding-bottom:12px;margin-bottom:14px;">' +
-              '<span style="font-size:15px;font-weight:700;">下载与扩展设置 (v3.3.3)</span>' +
+              '<span style="font-size:15px;font-weight:700;">下载与扩展设置 (v3.3.4)</span>' +
               '<button id="pkulaw-modal-close" style="background:none;border:none;color:#94a3b8;font-size:18px;cursor:pointer;">×</button>' +
             '</div>' +
             '<div style="display:flex;flex-direction:column;gap:12px;font-size:13px;">' +
@@ -2464,7 +2455,7 @@
       ? '<div style="position:fixed;inset:0;background:rgba(15,23,42,0.7);z-index:2147483646;display:flex;align-items:center;justify-content:center;padding:16px;">' +
           '<div style="width:100%;max-width:620px;background:#0f172a;border:1px solid #38bdf8;border-radius:12px;padding:20px;color:#f8fafc;box-shadow:0 20px 40px rgba(0,0,0,0.6);font-family:system-ui,-apple-system,sans-serif;">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #1e293b;padding-bottom:12px;margin-bottom:12px;">' +
-              '<span style="font-size:15px;font-weight:700;color:#38bdf8;">🔍 网页 DOM 元素诊断与单步调试面板 (v3.3.3)</span>' +
+              '<span style="font-size:15px;font-weight:700;color:#38bdf8;">🔍 网页 DOM 元素诊断与单步调试面板 (v3.3.4)</span>' +
               '<button id="pkulaw-diag-close" style="background:none;border:none;color:#94a3b8;font-size:20px;cursor:pointer;">×</button>' +
             '</div>' +
             (state.diagCopiedBanner
@@ -2490,7 +2481,7 @@
       diagModalHtml +
       '<div style="position:fixed;left:0;right:0;bottom:0;height:60px;background:#0f172a;border-top:2px solid #8B1E24;z-index:2147483645;display:flex;align-items:center;justify-content:space-between;padding:0 18px;gap:14px;box-shadow:0 -4px 20px rgba(0,0,0,0.35);font-family:system-ui,-apple-system,sans-serif;">' +
         '<div style="display:flex;align-items:center;gap:8px;white-space:nowrap;">' +
-          '<span style="display:inline-block;padding:4px 8px;border-radius:4px;background:#8B1E24;color:#fff;font-size:12px;font-weight:700;">法宝批量下载扩展 v3.3.3</span>' +
+          '<span style="display:inline-block;padding:4px 8px;border-radius:4px;background:#8B1E24;color:#fff;font-size:12px;font-weight:700;">法宝批量下载扩展 v3.3.4</span>' +
         '</div>' +
         mainActionHtml +
         '<div style="display:flex;align-items:center;gap:8px;white-space:nowrap;">' +

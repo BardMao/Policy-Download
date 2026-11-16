@@ -5,7 +5,7 @@ export function generateManifestJson(): string {
   const manifest = {
     manifest_version: 3,
     name: '北大法宝法律法规批量下载助手 (PKULAW Batch Downloader)',
-    version: '3.3.3',
+    version: '3.3.4',
     description:
       '在北大法宝官网 (pkulaw.com) 底部注入操作进度条与全自动分页批量下载引擎，支持第2+页精确同步全文格式与单次防重确认、极速翻页间隔，将各页原始压缩包保存至下载目录。',
     permissions: ['storage', 'downloads', 'scripting'],
@@ -15,7 +15,7 @@ export function generateManifestJson(): string {
       'https://pkulaw.com/*',
     ],
     action: {
-      default_title: '北大法宝批量下载助手 v3.3.3（点击打开或激活底部进度条）',
+      default_title: '北大法宝批量下载助手 v3.3.4（点击打开或激活底部进度条）',
     },
     background: {
       service_worker: 'background.js',
@@ -50,7 +50,7 @@ export function generateManifestJson(): string {
 export function generatePageHookJs(): string {
   const lines = [
     '// ============================================================================',
-    '// 北大法宝批量下载助手 - 页面主世界钩子 (page_hook.js v3.3.3, world: MAIN)',
+    '// 北大法宝批量下载助手 - 页面主世界钩子 (page_hook.js v3.3.4, world: MAIN)',
     '// 核心作用：当第 2 页及后续分页由扩展定时器自动点击「确定」触发下载时，',
     '// 网页处于无用户手势状态 (navigator.userActivation.isActive === false)，',
     '// 浏览器内置弹窗拦截器会拦截网页的 window.open / target="_blank" 表单提交，导致后续页无法下载。',
@@ -188,7 +188,7 @@ export function generateBackgroundJs(settings: AppSettings): string {
 
   const lines = [
     '// ============================================================================',
-    '// 北大法宝批量下载助手 - Chrome / Edge Manifest V3 后台服务 (background.js v3.3.3)',
+    '// 北大法宝批量下载助手 - Chrome / Edge Manifest V3 后台服务 (background.js v3.3.4)',
     '// 功能：1. 安装或重载扩展时立即向已打开的北大法宝标签页注入 page_hook.js 与 content.js',
     '//       2. 提供特权后台下载通道 (PKULAW_FORCE_OPEN_DOWNLOAD_URL)，突破第 2+ 页浏览器异步弹窗拦截',
     '//       3. 自动归档 pkulaw.com 下载的原始压缩包至浏览器默认“下载/Downloads”目录下的子文件夹',
@@ -412,9 +412,9 @@ export function generateContentJs(settings: AppSettings): string {
       .replace(/^\/+|\/+$/g, '') || 'PKULaw_Downloads';
 
   return `// ==UserScript==
-// @name         北大法宝法律法规批量下载助手 (Edge & Chrome 网页端自动化扩展 v3.3.3)
+// @name         北大法宝法律法规批量下载助手 (Edge & Chrome 网页端自动化扩展 v3.3.4)
 // @namespace    https://www.pkulaw.com/
-// @version      3.3.3
+// @version      3.3.4
 // @description  在北大法宝官网底部注入动态进度条：支持第2+页精确同步全文格式与单次防重确认、1~2秒极速翻页间隔，将各页原始压缩包保存至下载目录。
 // @author       PKULAW Batch Archiver
 // @match        https://www.pkulaw.com/*
@@ -565,9 +565,7 @@ export function generateContentJs(settings: AppSettings): string {
     completedZipFiles: 0,
     chosenFormat: session.chosenFormat || config.lastChosenFormat || '纯净版',
     recordedConfirmBtn: null,
-    recordedConfirmRawTarget: null,
     recordedConfirmText: '',
-    recordedConfirmModalRoot: null,
     recordedModalInputsState: [],
     lastOpenModalHtml: '',
     eventTrace: [],
@@ -1485,7 +1483,7 @@ export function generateContentJs(settings: AppSettings): string {
       txt.includes('确认') ||
       txt.includes('取消') ||
       Boolean(el.querySelector && el.querySelector('button, .el-button, .layui-layer-btn0, input[type="button"], input[type="submit"], a[class*="btn" i]'));
-    return hasFormat && hasAction;
+    return hasFormat && hasAction && Boolean(el.querySelector('input[type="radio"]'));
   }
 
   function cacheModalHtmlSnapshot(modalEl) {
@@ -1496,21 +1494,10 @@ export function generateContentJs(settings: AppSettings): string {
   }
 
   function findCustomDownloadModal() {
-    // 0. 优先检查第 1 页用户点击时记录的弹窗根节点（若当前可见）
-    if (
-      state.recordedConfirmModalRoot &&
-      document.body.contains(state.recordedConfirmModalRoot) &&
-      isVisible(state.recordedConfirmModalRoot) &&
-      (!state.recordedConfirmModalRoot.querySelector || !state.recordedConfirmModalRoot.querySelector('.el-table, .batch-container'))
-    ) {
-      cacheModalHtmlSnapshot(state.recordedConfirmModalRoot);
-      return state.recordedConfirmModalRoot;
-    }
-
     // 1. 优先匹配标准 UI 框架的对话框根节点（如 .el-dialog, .layui-layer, .el-message-box, .ant-modal, [role="dialog"]）
     const rootDialogSelectors = '.el-dialog, .layui-layer, .el-message-box, .ant-modal, [role="dialog"], .modal-dialog, .modal, .dialog, .popup';
     const rootDialogs = document.querySelectorAll(rootDialogSelectors);
-    for (let i = 0; i < rootDialogs.length; i++) {
+    for (let i = rootDialogs.length - 1; i >= 0; i--) {
       const el = rootDialogs[i];
       if (el.closest && el.closest('#pkulaw-ext-root')) continue;
       if (isDialogSubPart(el)) continue;
@@ -1657,15 +1644,6 @@ export function generateContentJs(settings: AppSettings): string {
       scopes.push(dialogRoot);
     }
 
-    // 1. 优先复用用户在第 1 页弹窗中亲手点击过的「确定」按钮节点（若仍在 DOM 中）
-    if (state.recordedConfirmBtn && document.body.contains(state.recordedConfirmBtn) && isVisible(state.recordedConfirmBtn)) {
-      for (let s = 0; s < scopes.length; s++) {
-        if (scopes[s].contains(state.recordedConfirmBtn)) {
-          return state.recordedConfirmBtn;
-        }
-      }
-    }
-
     // 2. 第一优先级：严格匹配真正的 <button> / <input> / .el-button 节点（防止被外层 <div class="confirm-btn"> 抢先命中而导致重复点击）
     for (let s = 0; s < scopes.length; s++) {
       const scope = scopes[s];
@@ -1720,15 +1698,13 @@ export function generateContentJs(settings: AppSettings): string {
   }
 
   function isModalLoadingOrClosed(modalEl, btnEl) {
-    return !isVisible(modalEl) || btnEl.disabled || btnEl.hasAttribute('disabled') ||
-      btnEl.classList.contains('is-loading') ||
-      Array.from(modalEl.querySelectorAll('.el-loading-mask')).some(function (node) {
-        return isVisible(node);
-      });
+    return !modalEl.isConnected || !modalEl.contains(btnEl) ||
+      !isVisible(modalEl) || !isVisible(btnEl) || btnEl.disabled ||
+      btnEl.getAttribute('aria-disabled') === 'true' || btnEl.classList.contains('is-loading');
   }
 
   // 通过法宝原生表单控件触发 change，并读回实际选择。Vue 可以在切换格式后重建字段区域。
-  async function syncModalFormatOptionsWithPage1(modalEl, targetFormat) {
+  async function syncModalFormatOptionsWithPage1(modalEl, targetFormat, attemptedInputs) {
     const formats = getModalOptions(modalEl, 'radio').filter(function (option) {
       return option.labelText === targetFormat && !option.input.disabled;
     });
@@ -1738,6 +1714,8 @@ export function generateContentJs(settings: AppSettings): string {
     }
 
     if (!formats[0].checked) {
+      if (attemptedInputs.has(formats[0].input)) return false;
+      attemptedInputs.add(formats[0].input);
       formats[0].input.click();
       await sleep(150);
     }
@@ -1758,20 +1736,37 @@ export function generateContentJs(settings: AppSettings): string {
     return selectedFormat === targetFormat;
   }
 
-  async function selectFormatAndConfirmInModalAsync(modalEl, targetFormat) {
-    if (!await syncModalFormatOptionsWithPage1(modalEl, targetFormat)) {
-      return '无法确认已选中「' + targetFormat + '」';
+  async function selectFormatAndConfirmInModalAsync(targetFormat) {
+    const attemptedInputs = new WeakSet();
+    let syncedModal = null;
+    let reason = '未找到可用的下载弹窗';
+    for (let attempt = 0; attempt < 50 && !state.stopRequested; attempt++) {
+      const modal = findCustomDownloadModal();
+      if (modal) {
+        if (modal !== syncedModal || detectSelectedFormatInModal(modal) !== targetFormat) {
+          if (await syncModalFormatOptionsWithPage1(modal, targetFormat, attemptedInputs)) {
+            syncedModal = modal;
+          }
+        }
+        // Vue 可能替换弹窗或异步解锁按钮，确认只使用当前有效节点。
+        const liveModal = findCustomDownloadModal();
+        if (liveModal && detectSelectedFormatInModal(liveModal) === targetFormat) {
+          const confirm = findConfirmButtonInModal(liveModal);
+          reason = confirm ? '下载弹窗的确定按钮仍未就绪' : '未找到下载弹窗的确定按钮';
+          if (!state.stopRequested && liveModal === syncedModal && confirm && !isModalLoadingOrClosed(liveModal, confirm)) {
+            touchBatchLock(true);
+            pushTrace('modal_click_confirm', confirm.tagName + ':' + (confirm.textContent || '').trim().slice(0, 16));
+            confirm.click();
+            return null;
+          }
+        } else {
+          reason = '无法确认已选中「' + targetFormat + '」';
+        }
+      }
+      await sleep(200);
     }
-
-    const confirmBtn = findConfirmButtonInModal(modalEl);
-    if (!confirmBtn || isModalLoadingOrClosed(modalEl, confirmBtn)) {
-      return '下载弹窗的确定按钮不可用';
-    }
-
-    touchBatchLock(true);
-    pushTrace('modal_click_confirm', confirmBtn.tagName + ':' + (confirmBtn.textContent || '').trim().slice(0, 16));
-    confirmBtn.click();
-    return null;
+    pushTrace('modal_confirm_timeout', reason);
+    return reason;
   }
 
 
@@ -2104,10 +2099,9 @@ export function generateContentJs(settings: AppSettings): string {
   }
 
   // 统一的「第 1 页确认完成并启动跨页循环」入口（支持点击监听与下载信号自愈双重触发，且严格幂等）
-  function triggerFirstPageConfirmedAndStartLoop(triggerSource, modalEl, btnEl, rawTarget) {
+  function triggerFirstPageConfirmedAndStartLoop(triggerSource, modalEl, btnEl) {
     if (state.loopRunning || state.stage === 'downloading') return;
     if (btnEl) state.recordedConfirmBtn = btnEl;
-    if (rawTarget) state.recordedConfirmRawTarget = rawTarget;
 
     if (modalEl) {
       const snap = snapshotModalInputsState(modalEl);
@@ -2203,14 +2197,12 @@ export function generateContentJs(settings: AppSettings): string {
       ) {
         const realButton = (btnEl.tagName === 'BUTTON' ? btnEl : (btnEl.querySelector ? btnEl.querySelector('button') : null)) || btnEl;
         if (dialogRoot && (!dialogRoot.querySelector || !dialogRoot.querySelector('.el-table, .batch-container'))) {
-          state.recordedConfirmModalRoot = dialogRoot;
           state.recordedConfirmBtn = realButton;
-          state.recordedConfirmRawTarget = target;
           if (btnText && btnText.length <= 8) {
             state.recordedConfirmText = btnText;
           }
         }
-        triggerFirstPageConfirmedAndStartLoop('user_click_' + (btnText || rawText || 'confirm'), dialogRoot || modal, realButton, target);
+        triggerFirstPageConfirmedAndStartLoop('user_click_' + (btnText || rawText || 'confirm'), dialogRoot || modal, realButton);
       }
     },
     true
@@ -2398,7 +2390,6 @@ export function generateContentJs(settings: AppSettings): string {
     state.completedZipFiles = 0;
     state.currentPage = getActivePageNumber() || 1;
     state.recordedModalInputsState = [];
-    state.recordedConfirmModalRoot = null;
     state.recordedConfirmBtn = null;
     state.recordedConfirmText = '';
     detectPkulawDomState();
@@ -2553,7 +2544,7 @@ export function generateContentJs(settings: AppSettings): string {
         }
 
         expectZip();
-        const confirmError = await selectFormatAndConfirmInModalAsync(modal, state.chosenFormat);
+        const confirmError = await selectFormatAndConfirmInModalAsync(state.chosenFormat);
         if (confirmError) {
           stopWithError('第 ' + targetPage + ' 页' + confirmError + '，已暂停。');
           break;
@@ -2610,7 +2601,7 @@ export function generateContentJs(settings: AppSettings): string {
     const stats = countCheckedResultItems();
 
     return {
-      extVersion: '3.3.3',
+      extVersion: '3.3.4',
       url: window.location.href,
       title: document.title,
       stage: state.stage,
@@ -2838,7 +2829,7 @@ export function generateContentJs(settings: AppSettings): string {
       ? '<div style="position:fixed;inset:0;background:rgba(15,23,42,0.65);z-index:2147483646;display:flex;align-items:center;justify-content:center;padding:16px;">' +
           '<div style="width:100%;max-width:480px;background:#0f172a;border:1px solid #334155;border-radius:12px;padding:20px;color:#f8fafc;box-shadow:0 20px 40px rgba(0,0,0,0.5);font-family:system-ui,-apple-system,sans-serif;">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #1e293b;padding-bottom:12px;margin-bottom:14px;">' +
-              '<span style="font-size:15px;font-weight:700;">下载与扩展设置 (v3.3.3)</span>' +
+              '<span style="font-size:15px;font-weight:700;">下载与扩展设置 (v3.3.4)</span>' +
               '<button id="pkulaw-modal-close" style="background:none;border:none;color:#94a3b8;font-size:18px;cursor:pointer;">×</button>' +
             '</div>' +
             '<div style="display:flex;flex-direction:column;gap:12px;font-size:13px;">' +
@@ -2877,7 +2868,7 @@ export function generateContentJs(settings: AppSettings): string {
       ? '<div style="position:fixed;inset:0;background:rgba(15,23,42,0.7);z-index:2147483646;display:flex;align-items:center;justify-content:center;padding:16px;">' +
           '<div style="width:100%;max-width:620px;background:#0f172a;border:1px solid #38bdf8;border-radius:12px;padding:20px;color:#f8fafc;box-shadow:0 20px 40px rgba(0,0,0,0.6);font-family:system-ui,-apple-system,sans-serif;">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #1e293b;padding-bottom:12px;margin-bottom:12px;">' +
-              '<span style="font-size:15px;font-weight:700;color:#38bdf8;">🔍 网页 DOM 元素诊断与单步调试面板 (v3.3.3)</span>' +
+              '<span style="font-size:15px;font-weight:700;color:#38bdf8;">🔍 网页 DOM 元素诊断与单步调试面板 (v3.3.4)</span>' +
               '<button id="pkulaw-diag-close" style="background:none;border:none;color:#94a3b8;font-size:20px;cursor:pointer;">×</button>' +
             '</div>' +
             (state.diagCopiedBanner
@@ -2903,7 +2894,7 @@ export function generateContentJs(settings: AppSettings): string {
       diagModalHtml +
       '<div style="position:fixed;left:0;right:0;bottom:0;height:60px;background:#0f172a;border-top:2px solid #8B1E24;z-index:2147483645;display:flex;align-items:center;justify-content:space-between;padding:0 18px;gap:14px;box-shadow:0 -4px 20px rgba(0,0,0,0.35);font-family:system-ui,-apple-system,sans-serif;">' +
         '<div style="display:flex;align-items:center;gap:8px;white-space:nowrap;">' +
-          '<span style="display:inline-block;padding:4px 8px;border-radius:4px;background:#8B1E24;color:#fff;font-size:12px;font-weight:700;">法宝批量下载扩展 v3.3.3</span>' +
+          '<span style="display:inline-block;padding:4px 8px;border-radius:4px;background:#8B1E24;color:#fff;font-size:12px;font-weight:700;">法宝批量下载扩展 v3.3.4</span>' +
         '</div>' +
         mainActionHtml +
         '<div style="display:flex;align-items:center;gap:8px;white-space:nowrap;">' +
@@ -3171,32 +3162,32 @@ export function generateContentJs(settings: AppSettings): string {
 export function generateExtensionReadme(): string {
   return [
     '====================================================================',
-    '北大法宝法律法规批量下载扩展 v3.3.3 (适用于 Microsoft Edge 与 Google Chrome)',
+    '北大法宝法律法规批量下载扩展 v3.3.4 (适用于 Microsoft Edge 与 Google Chrome)',
     '====================================================================',
     '',
-    '【一、 v3.3.3 核心升级说明】',
+    '【一、 v3.3.4 核心升级说明】',
     '1. 彻底解决「第 2+ 页下载成了《【北大法宝】目录列表.xls》而非第 1 页所选法规全文压缩包 (.zip)」的问题：',
     '   - 根因修复：v3.2.0 在第 2+ 页对同一个单选框/复选框连续派发了 3 次点击（导致已勾选项被取消回退为默认的 Excel 目录列表），且未录制第 1 页用户在弹窗内对各个单选/复选框的操作。',
     '   - 记录起始页的下载格式及字段。后续页使用同名的原生单选框切换格式，经读回确认后提交。',
     '2. 彻底解决「同一页重复下载多次（目录列表 (1)、(2)...）」的问题：',
     '   - 根因修复：法宝点击「确定」后按钮会进入 Element UI 的 .is-loading 禁用等待打包状态（耗时约 3~8 秒），v3.2.0 在弹窗未关闭时于 220ms、970ms、6500ms 重复点击了确定按钮，导致服务端收到多次请求。',
-    '   - v3.3.3 新增 isModalLoadingOrClosed 状态锁：精准点击真正的 <button> 一次后，一旦检测到按钮进入 .is-loading 或 disabled 状态即停止重点，静候服务端完成 ZIP 打包。',
+    '   - v3.3.4 新增 isModalLoadingOrClosed 状态锁：精准点击真正的 <button> 一次后，一旦检测到按钮进入 .is-loading 或 disabled 状态即停止重点，静候服务端完成 ZIP 打包。',
     '3. 隔页等待随机时间间隔缩至最小：',
     '   - 默认隔页随机等待时间已从 4.5s~8.5s 大幅缩短为 1.0s~2.0s（并在底部「⚙ 下载设置」中提供一键切换「⚡ 极速模式 0.5s~1.2s」按钮）。',
     '',
     '【二、 如何更新到 Edge / Chrome 浏览器】',
     '1. 将最新下载的 PKULaw_Edge_Chrome_Extension.zip 解压覆盖到原文件夹。',
     '2. 打开 Edge 地址栏输入 edge://extensions（Chrome 输入 chrome://extensions）。',
-    '3. 点击本扩展卡片上的「重新加载」按钮，确认版本号变为 3.3.3，随后刷新北大法宝网页即可。',
+    '3. 点击本扩展卡片上的「重新加载」按钮，确认版本号变为 3.3.4，随后刷新北大法宝网页即可。',
   ].join('\r\n');
 }
 
 export function generateExtensionReadmeMarkdown(): string {
-  return `# 北大法宝法律法规批量下载扩展 v3.3.3 (Edge / Chrome)
+  return `# 北大法宝法律法规批量下载扩展 v3.3.4 (Edge / Chrome)
 
 本扩展（Manifest V3）专为 **北大法宝 V6 (\`https://www.pkulaw.com\`)** 打造，在网页底部注入可视化批量下载控制条，支持自动全选、跨页自动同步下载格式、人机验证实时监测自动恢复与原始压缩包归档。
 
-## 一、 v3.3.3 核心特性
+## 一、 v3.3.4 核心特性
 
 1. **第 1 页弹窗格式录制 + 第 2 页起 1:1 状态同步**：
    - 起始页在「批量下载」弹窗中选择全文格式（纯文本 / 纯净版 / Word / PDF / 超文本）并点击「确定」时，记录实际选中的格式及字段。
@@ -3215,7 +3206,7 @@ export function generateExtensionReadmeMarkdown(): string {
    - **Edge**：地址栏输入 \`edge://extensions\`，开启「开发人员模式」。
    - **Chrome**：地址栏输入 \`chrome://extensions\`，开启「开发者模式」。
 3. 点击 **「加载解压缩的扩展 / 加载已解压的扩展程序」**，选择解压后的文件夹。
-4. 若为覆盖更新，点击扩展卡片上的 **「刷新/重新加载 (⟳)」** 按钮，确认版本号为 \`3.3.3\`，然后刷新北大法宝网页即可使用。
+4. 若为覆盖更新，点击扩展卡片上的 **「刷新/重新加载 (⟳)」** 按钮，确认版本号为 \`3.3.4\`，然后刷新北大法宝网页即可使用。
 `;
 }
 

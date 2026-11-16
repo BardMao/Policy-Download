@@ -56,7 +56,7 @@ test('only a completed, nonempty PKULaw ZIP succeeds and only the active search 
   ]);
 });
 
-test('advanced-search download switches the native radio to plain text before confirming', async () => {
+test('advanced-search download waits for an enabled button in the replacement dialog', async () => {
   const source = generateContentJs({ downloadDir: '测试' });
   const copyFunctions = (start, end) => {
     const first = source.indexOf(start);
@@ -64,8 +64,6 @@ test('advanced-search download switches the native radio to plain text before co
     assert.ok(first >= 0 && last > first);
     return source.slice(first, last);
   };
-  let confirmClicks = 0;
-  let changeAccepted = true;
   const radio = (text, checked) => {
     const label = {
       textContent: text,
@@ -80,32 +78,42 @@ test('advanced-search download switches the native radio to plain text before co
       }
     };
   };
-  const excel = radio('Excel', true);
-  const text = radio(' \uE600 纯文本', false);
-  text.click = () => {
-    if (changeAccepted) {
+  function dialog() {
+    const excel = radio('Excel', true);
+    const text = radio(' \uE600 纯文本', false);
+    const confirm = {
+      tagName: 'BUTTON',
+      textContent: '确定',
+      disabled: true,
+      clicks: 0,
+      getAttribute: () => null,
+      classList: { contains: () => false },
+      click() {
+        assert.equal(this.disabled, false);
+        assert.equal(text.checked, true);
+        assert.equal(excel.checked, false);
+        this.clicks++;
+      }
+    };
+    text.click = () => {
       excel.select(false);
       text.select(true);
-    }
-  };
-  const modal = {
-    contains: () => true,
-    querySelectorAll: (selector) => {
-      if (selector === 'input[type="radio"]') return [excel, text];
-      if (selector === '.el-loading-mask') return [{ hidden: true }];
-      return [];
-    }
-  };
-  const confirm = {
-    tagName: 'BUTTON',
-    textContent: '确定',
-    hasAttribute: () => false,
-    classList: { contains: () => false },
-    click() {
-      assert.equal(text.checked, true);
-      assert.equal(excel.checked, false);
-      confirmClicks++;
-    }
+    };
+    return {
+      isConnected: true,
+      confirm,
+      text,
+      contains: (node) => node === confirm || text.labels.includes(node) || excel.labels.includes(node),
+      querySelectorAll: (selector) => selector === 'input[type="radio"]' ? [excel, text] : []
+    };
+  }
+  const oldDialog = dialog();
+  const newDialog = dialog();
+  let activeDialog = oldDialog;
+  let newPolls = 0;
+  oldDialog.text.click = () => {
+    oldDialog.isConnected = false;
+    activeDialog = newDialog;
   };
   const confirmDownload = runInNewContext(
     copyFunctions('  const downloadFormats', '  function dispatchRealMouseClick') +
@@ -114,18 +122,22 @@ test('advanced-search download switches the native radio to plain text before co
     {
       state: { recordedModalInputsState: [] },
       pushTrace: () => {},
-      sleep: async () => {},
+      sleep: async () => {
+        if (activeDialog === newDialog && ++newPolls === 3) newDialog.confirm.disabled = false;
+      },
       touchBatchLock: () => {},
-      findConfirmButtonInModal: () => confirm,
+      findCustomDownloadModal: () => activeDialog,
+      findConfirmButtonInModal: (modal) => modal.confirm,
       isVisible: (node) => !node.hidden
     }
   );
 
-  assert.equal(await confirmDownload(modal, '纯文本'), null);
-  assert.equal(confirmClicks, 1);
-  changeAccepted = false;
-  excel.select(true);
-  text.select(false);
-  assert.match(await confirmDownload(modal, '纯文本'), /无法确认已选中/);
-  assert.equal(confirmClicks, 1);
+  assert.equal(await confirmDownload('纯文本'), null);
+  assert.equal(oldDialog.confirm.clicks, 0);
+  assert.equal(newDialog.confirm.clicks, 1);
+  activeDialog = dialog();
+  activeDialog.text.click = () => {};
+  activeDialog.confirm.disabled = false;
+  assert.match(await confirmDownload('纯文本'), /无法确认已选中/);
+  assert.equal(activeDialog.confirm.clicks, 0);
 });
